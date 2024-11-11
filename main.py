@@ -254,7 +254,7 @@ def train_and_test(model: Model.VAE, epochs=60, batch_size=128, device="cuda", d
 
 
 def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.4], log_mse=False,
-               il_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0], logfilename='log_illidvae.csv', resultname='res_illidvae', pt_param=None):
+               il_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0], logfilename='log_lidvae.csv', resultname='res_lidvae', pt_param=None):
     for b in beta_list:
         for il in il_list:
             for i in range(niter):
@@ -262,13 +262,6 @@ def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_l
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_vae_ep(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.5, 1.0, 2.0, 4.0, 8.0, 16.0], 
-               logfilename='log_vaeep.csv', resultname='res_vaeep', pt_param=None):
-    for b in beta_list:
-        for i in range(niter):
-            train_and_test(Model.VanillaVAE_EP(is_log_mse=False, beta=b, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
-                           dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
-    return
 
 def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae', pt_param=None):
     for b in beta_list:
@@ -293,13 +286,6 @@ def exp_vae_conv(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_lrvae_ep(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[1.0], alpha_list=[0.01], pz=True, logfilename='log_lrvaeep.csv', resultname='res_lrvaeep', pt_param=None):
-    for a in alpha_list:
-        for b in beta_list:
-            for i in range(niter):
-                train_and_test(Model.LRVAE_EP(is_log_mse=False, beta=b, alpha=a, from_pz=pz, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
-                               dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
-    return
 
 
 if __name__ == "__main__":
@@ -310,7 +296,7 @@ if __name__ == "__main__":
     #exp_vae(1, exp_epochs=1, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
     #exp_vae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[3.0], logfilename='log_vae_mnist.csv', resultname='result_vae_mnist')
     #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1], alpha_list=[0.4], logfilename='log_lrvae_mnist.csv', resultname='result_lrvae_mnist')
-    exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 0.4, 1.0, 2.0], il_list=[0.0, 0.1, 0.4, 1.0, 2.0], logfilename='log_illidvae_lm_mnist.csv', resultname='result_illidvae_lm_mnist', log_mse=True)
+    #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 0.4, 1.0, 2.0], il_list=[0.0, 0.1, 0.4, 1.0, 2.0], logfilename='log_lidvae_lm_mnist.csv', resultname='result_lidvae_lm_mnist', log_mse=True)
 
     # Test
     #exp_lrvae(1, 0, 128, exp_data, beta_list=[1.0], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11071629_b=1.0_a=0.1/model_99.pt')
@@ -319,12 +305,13 @@ if __name__ == "__main__":
     #exp_vae(1, 0, 128, exp_data, beta_list=[2.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11071514_b=2.0/model_99.pt')
     #exp_lrvae(1, 0, 128, exp_data, beta_list=[3.0], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11081131_b=3.0_a=0.1/model_99.pt')
     #exp_vae(1, 0, 128, exp_data, beta_list=[3.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11081127_b=3.0/model_99.pt')
-    #exp_vae(1, 0, 128, exp_data, beta_list=[2.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_mnist_illidvae/_b=2.0/model_99.pt')
-    #exp_lidvae(1, 0, exp_data, beta_list=[2.0], il_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_illidvae_mnist/LIDVAE 11081621_b=2.0_il=0.05/model_99.pt')
+    #exp_vae(1, 0, 128, exp_data, beta_list=[2.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_mnist_lidvae/_b=2.0/model_99.pt')
+    #exp_lidvae(1, 0, exp_data, beta_list=[2.0], il_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_mnist/LIDVAE 11081621_b=2.0_il=0.05/model_99.pt')
 
     # Curve Scatter
-    #model_list = [#Model.LIDVAE(dataset=exp_data), Model.VanillaVAE(dataset=exp_data), Model.LRVAE(dataset=exp_data) ]
-    #rec_lr_curve_visualization(model_list, exp_data, "cuda")
+    model_dict = {"vae": Model.VanillaVAE(dataset=exp_data), "lrvae": Model.LRVAE(dataset=exp_data), "lidvae":Model.LIDVAE(dataset=exp_data)}
+    #model_dict = {"lidvae":Model.LIDVAE(dataset=exp_data)}
+    rec_lr_curve_visualization(model_dict, exp_data, "cuda")
 
 
 
@@ -335,8 +322,8 @@ if __name__ == "__main__":
     #exp_vae_ep(4, exp_epochs, 128, 'fashionmnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_fashionmnist_vaeep')
     #exp_vae_ep(4, exp_epochs, 64, 'celeba', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_celeba_vaeep')
 
-    #exp_lidvae(1, exp_epochs, 128, 'mnist', beta_list=[1.0, 3.0], il_list=[0.0, 0.5, 1.0, 1.5], logfilename='log_illidvae.csv', resultname='result_mnist_ilidvae')
-    #exp_lidvae(4, exp_epochs, 128, 'celeba', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], il_list=[0.0, 0.1, 0.2, 0.4], logfilename='illidvae_celeba.csv', resultname='ilidvae_celeba')
+    #exp_lidvae(1, exp_epochs, 128, 'mnist', beta_list=[1.0, 3.0], il_list=[0.0, 0.5, 1.0, 1.5], logfilename='log_lidvae.csv', resultname='result_mnist_ilidvae')
+    #exp_lidvae(4, exp_epochs, 128, 'celeba', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], il_list=[0.0, 0.1, 0.2, 0.4], logfilename='lidvae_celeba.csv', resultname='ilidvae_celeba')
 
     #exp_lrvae_ep(4, exp_epochs, 128, 'mnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], alpha_list=[0.01, 0.1, 0.4, 1.0],
     #           logfilename='log_lrvae.csv', resultname='result_mnist_lrvae')
@@ -353,7 +340,7 @@ if __name__ == "__main__":
     #exp_vae(beta_list=[1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0])
     #exp_lrvae(niter=2, beta_list=[0.4], alpha_list=[1.0], pz=False, logfilename='log_lrvae_mnist_qzx_ba.csv', resultname='lrvae_mnist_qzx_ba')
     #exp_lidvae()
-    #exp_lidvae(1, 1, exp_data, beta_list=[0.5, 1.0, 2.0, 4.0], il_list=[0.0, 0.5, 1.0, 1.5], logfilename='log_mnist_illidvae.csv', resultname='result_mnist_ilid')
+    #exp_lidvae(1, 1, exp_data, beta_list=[0.5, 1.0, 2.0, 4.0], il_list=[0.0, 0.5, 1.0, 1.5], logfilename='log_mnist_lidvae.csv', resultname='result_mnist_ilid')
     #train_and_test(Model.LRVAE_EP(is_log_mse=False, beta=1.0, alpha=0.01), epochs=2, dataset_name=exp_data, logfilename='TEST.csv', resultname='TEST')
     #train_and_test(Model.VanillaVAE(beta=0.1, dataset=exp_data), epochs=exp_epochs, dataset_name=exp_data, logfilename='TEST.csv', resultname='TEST')
     #train_and_test(Model.VanillaVAE_EP(beta=0.1, dataset=exp_data), epochs=exp_epochs, dataset_name=exp_data, logfilename='TEST.csv', resultname='TEST')

@@ -142,7 +142,6 @@ def log_unified(path, list_elements, list_names, logfilename='unified_log.csv'):
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
-import os
 def pca_visualization(model, loader_test, device, epoch, name, resultname, prior=False, color_rule='class'):
 
     os.makedirs("./results/"+resultname+"/" + name + "/pca", exist_ok=True)
@@ -214,6 +213,7 @@ def rec_lr_curve_visualization(models, dataset_name, device):
     l_lr = []
     colors = []
     labels = []
+    color_labels = []
 
     if dataset_name == 'mnist':
         transforms = torchvision.transforms.Compose(
@@ -249,16 +249,18 @@ def rec_lr_curve_visualization(models, dataset_name, device):
     count_points = 0
     for root, dirs, files in os.walk("./results/"):
         for file in files:
-            if file == "model_99.pt" and root.startswith("./results/result_"):
+            if file == "model_99.pt" and root.startswith("./results/result_") and root.find(dataset_name) != -1:
                 model_path = os.path.join(root, file)
-                for model in models:
-                    try:
-                        model.load_state_dict(torch.load(model_path, map_location=device))
-                        break
-                    except Exception as e:
-                        #print(f"Error loading model: {e}")
-                        continue
-                else:
+                key = root.split('/')[2].split('_')[1]
+                try:
+                    model = models[key]
+                except Exception as e:
+                    print(f"Error finding key: {e}")
+                    continue
+                try:
+                    model.load_state_dict(torch.load(model_path, map_location=device))
+                except Exception as e:
+                    print(f"Error loading model: {e}")
                     continue
                 model.to(device).eval()
                 
@@ -266,34 +268,39 @@ def rec_lr_curve_visualization(models, dataset_name, device):
                 x, _ = next(iter(test_loader))
                 x = x.to(device)
                 
-                with torch.no_grad():
-                    res_list = model(x)
-                    recon = res_list[0]
-                    mu = res_list[1]
-                    log_var = res_list[2]
-                    z_input = res_list[3] if len(res_list) > 3 else None
-                    z_recon = res_list[4] if len(res_list) > 4 else None
-                    loss, loss_rec, loss_reg, loss_lr = model.loss(x, recon, mu, log_var, z_input=z_input, z_recon=z_recon)
-                    if isinstance(loss_rec, torch.Tensor):
-                        loss_rec = loss_rec.cpu().detach()
-                    if isinstance(loss_lr, torch.Tensor):
-                        loss_lr = loss_lr.cpu().detach()
+                res_list = model(x, latent_recon=True) # to get lr loss for test
+                recon = res_list[0]
+                mu = res_list[1]
+                log_var = res_list[2]
+                z_input = res_list[3] if len(res_list) > 3 else None
+                z_recon = res_list[4] if len(res_list) > 4 else None
+                loss_rec = ((x - recon) ** 2).mean(dim=0).sum()
+                loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
+
+                if isinstance(loss_rec, torch.Tensor):
+                    loss_rec = loss_rec.cpu().detach()
+                if isinstance(loss_lr, torch.Tensor):
+                    loss_lr = loss_lr.cpu().detach()
                 
                 l_rec.append(loss_rec)
                 l_lr.append(loss_lr)
-                color_hash = hash(root.split('/')[2]) % 10  # Hash and map to a value between 0 and 9
-                colors.append(color_hash)
                 labels.append(root.split('/')[3])
+
+                if root.split('/')[3].split(' ')[0] not in color_labels:
+                    color_labels.append(root.split('/')[3].split(' ')[0])
+
+                color_index = len(color_labels) - 1
+                colors.append(color_index)
+                
                 count_points += 1
-    
-    print(l_lr) ###########
 
     plt.figure(figsize=(10, 8))
+    plt.title('Reconstruction Loss vs Latent Reconstruction Loss:'+ dataset_name)
     scatter = plt.scatter(l_lr, l_rec, c=colors, cmap='tab10')
-    for i, label in enumerate(labels):
-        plt.annotate(label, (l_lr[i], l_rec[i]), fontsize=8, alpha=0.7)
+    for i, label_name in enumerate(labels):
+        plt.annotate(label_name, (l_lr[i], l_rec[i]), fontsize=8, alpha=0.7, rotation=0)
     plt.yscale('log')
-    plt.xlim([min(l_lr) - 0.01, max(l_lr) + 0.01])
+    plt.xscale('log')
     plt.xlabel('Latent Reconstruction Loss')
     plt.ylabel('Reconstruction Loss')
     #plt.legend()
