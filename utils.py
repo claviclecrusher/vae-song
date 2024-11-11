@@ -207,8 +207,11 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     plt.close()
 
 
-
-def rec_lr_curve_visualization(models, dataset_name, device):
+# ./results 아래에 있는 모든 결과들을 불러와서, 각각의 reconstruction loss와 latent reconstruction loss를 scatter plot으로 그려주는 함수
+# 각각의 결과는 다른 색으로 표시되며, 각각의 결과는 그 결과가 나온 디렉토리 이름으로 표시됨
+# dataset_name은 mnist, celeba, fashionmnist 중 하나를 입력받음
+# ./results 하위 디렉토리 이름 가장 마지막은 _dataset_name으로 끝나야 함
+def rec_lr_scatter_visualization(models, dataset_name, device):
     l_rec = []
     l_lr = []
     colors = []
@@ -303,10 +306,9 @@ def rec_lr_curve_visualization(models, dataset_name, device):
     plt.xscale('log')
     plt.xlabel('Latent Reconstruction Loss')
     plt.ylabel('Reconstruction Loss')
-    #plt.legend()
-    #plt.colorbar(scatter, label='Directory')
-    os.makedirs("./results/rec_curve", exist_ok=True)
-    plt.savefig("./results/rec_curve/loss_scatter_plot.png")
+    
+    os.makedirs("./results/rec_scatter", exist_ok=True)
+    plt.savefig("./results/rec_scatter/loss_scatter_plot.png")
     plt.close()
 
     print(count_points, "points plotted")

@@ -7,7 +7,7 @@ import torch
 import torchvision
 import os
 import model as Model
-from utils import pca_visualization, rec_lr_curve_visualization
+from utils import pca_visualization, rec_lr_scatter_visualization
 
 
 def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, pca=True):
@@ -291,6 +291,7 @@ def exp_vae_conv(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta
 if __name__ == "__main__":
     exp_epochs = 100 # 0 for only testing
     exp_data = 'mnist'
+    model_dict = {"vae": Model.VanillaVAE(dataset=exp_data), "lrvae": Model.LRVAE(dataset=exp_data), "lidvae":Model.LIDVAE(dataset=exp_data)}
 
     # Train
     #exp_vae(1, exp_epochs=1, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
@@ -309,9 +310,7 @@ if __name__ == "__main__":
     #exp_lidvae(1, 0, exp_data, beta_list=[2.0], il_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_mnist/LIDVAE 11081621_b=2.0_il=0.05/model_99.pt')
 
     # Curve Scatter
-    model_dict = {"vae": Model.VanillaVAE(dataset=exp_data), "lrvae": Model.LRVAE(dataset=exp_data), "lidvae":Model.LIDVAE(dataset=exp_data)}
-    #model_dict = {"lidvae":Model.LIDVAE(dataset=exp_data)}
-    rec_lr_curve_visualization(model_dict, exp_data, "cuda")
+    rec_lr_scatter_visualization(model_dict, exp_data, "cuda")
 
 
 
