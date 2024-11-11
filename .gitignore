@@ -161,3 +161,10 @@ cython_debug/
 
 result
 runs
+
+nohup.out
+
+results/
+runs/
+dataset/
+log/

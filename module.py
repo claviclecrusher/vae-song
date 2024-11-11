@@ -111,3 +111,37 @@ class ICNN(torch.nn.Module):
             x = self.activation(w(x) + a(input))
 
         return x
+
+
+class LinearModule_EP(torch.nn.Module):
+    def __init__(self, in_channel, hidden_channel=128, num_layers=2):
+        super().__init__()
+
+        # Note that the paper uses alpha=0.2 as an example
+        self.activation = torch.nn.LeakyReLU(0.2)
+
+        self.W = []
+        self.A = []
+        for _ in range(num_layers - 1):
+            self.W.append(torch.nn.Linear(hidden_channel, hidden_channel))
+            self.A.append(torch.nn.Linear(in_channel, hidden_channel))
+        self.W.append(torch.nn.Linear(hidden_channel, in_channel)) # NOT EQUAL PARAMS (origianl: (hidden_channel, 1))
+        self.A.append(torch.nn.Linear(in_channel, 1))
+
+        self.W = torch.nn.Sequential(*self.W)
+        self.A = torch.nn.Sequential(*self.A)
+
+        # Note that actual layers are A_{0:num_layers}
+        # We have (num_layers+1) layers;
+        # specifically, there are (num_layers) hidden layers and output layer
+        # Then z_{num_layers+1} is in R^1
+        # This strange numbering follows the original implementation
+        self.A0 = torch.nn.Linear(in_channel, hidden_channel)
+
+    def forward(self, input):
+        x = self.activation(self.A0(input)).pow(2)
+
+        for w, a in zip(self.W, self.A):
+            x = self.activation(w(x) + a(input))
+
+        return x
