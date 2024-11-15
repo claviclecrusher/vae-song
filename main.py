@@ -7,8 +7,8 @@ import torch
 import torchvision
 import os
 import model as Model
-from utils import pca_visualization, rec_lr_scatter_visualization
-
+from utils import pca_visualization
+import utils
 
 def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, pca=True):
     model.eval() #
@@ -29,7 +29,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         loss_reg_total += float(loss_reg)
         loss_lr_total += float(loss_lr)
 
-    if save_img == True:
+    if save_img == True and (epoch & (epoch - 1)) == 0:
         os.makedirs("./results/"+resultname+"/" + name + "/valontr", exist_ok=True)
         for _ in tqdm(range(1), leave=False, desc="Test"):
             x, _ = next(iter(loader_test))
@@ -72,7 +72,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
 
 
 
-def train_and_test(model: Model.VAE, epochs=60, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None):
+def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None):
     if dataset_name == 'mnist':
         transforms = torchvision.transforms.Compose(
             [
@@ -149,7 +149,8 @@ def train_and_test(model: Model.VAE, epochs=60, batch_size=128, device="cuda", d
         name += "_il=" + str(float(model.il_factor))
 
     writer = SummaryWriter(log_dir="runs/" + name)    
-    os.makedirs("./results/"+resultname+"/" + name, exist_ok=True)
+    os.makedirs("./results/"+resultname+"/" + name + "/params/", exist_ok=True)
+    os.makedirs("./results/"+resultname+"/" + name + "/params/", exist_ok=True)
 
     # Main train loop
     for epoch in tqdm(range(epochs), desc=name):
@@ -186,9 +187,9 @@ def train_and_test(model: Model.VAE, epochs=60, batch_size=128, device="cuda", d
         loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, pca=do_pca)
 
         writer.add_scalar("loss/test", loss_total / len(loader_test), epoch)
-        if epoch % 10 == 9:
+        if epoch % 100 == 1 or (epoch & (epoch - 1)) == 0:
             torch.save(
-                model.state_dict(), "./results/" + resultname + "/" + name + "/model_" + str(epoch) + ".pt"
+                model.state_dict(), "./results/" + resultname + "/" + name + "/params/model_" + str(epoch) + ".pt"
             )
 
     epoch = epochs
@@ -197,7 +198,7 @@ def train_and_test(model: Model.VAE, epochs=60, batch_size=128, device="cuda", d
     # Generate samples to calculate FID score
     # We cannot use no_grad, since LIDVAE requires calculation of gradient
     # with torch.no_grad():
-    if True:
+    if epochs < 0: # run only test
         os.makedirs("./results/"+resultname+"/" + name + "/generation", exist_ok=True)
 
         SAMPLE_ITERATION = 50
@@ -224,18 +225,19 @@ def train_and_test(model: Model.VAE, epochs=60, batch_size=128, device="cuda", d
     writer.close()
 
     # Calculate FID via `pytorch_fid` lib
-    fid = "None"
-    try:
-        import pytorch_fid
-        fid = os.popen(
-            f'python -m pytorch_fid ../mnist/ "./results/{resultname}/{name}/generation/" --device cuda:0'
-        ).read()
-        print('fid:',fid)
-    except ModuleNotFoundError:
-        print("Please install `pytorch_fid` to show FID score")
+    fid = -1
+    if epochs < 0: # run only test
+        fid = "None"
+        try:
+            import pytorch_fid
+            fid = os.popen(
+                f'python -m pytorch_fid ../mnist/ "./results/{resultname}/{name}/generation/" --device cuda:0'
+            ).read()
+            print('fid:',fid)
+        except ModuleNotFoundError:
+            print("Please install `pytorch_fid` to show FID score")
 
     # Calculate NLL, AU, KL
-    import utils
     loader_eval = DataLoader(
         test_dataset,
         batch_size=50,
@@ -296,21 +298,16 @@ if __name__ == "__main__":
     # Train
     #exp_vae(1, exp_epochs=1, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
     #exp_vae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[3.0], logfilename='log_vae_mnist.csv', resultname='result_vae_mnist')
-    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1], alpha_list=[0.4], logfilename='log_lrvae_mnist.csv', resultname='result_lrvae_mnist')
-    #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 0.4, 1.0, 2.0], il_list=[0.0, 0.1, 0.4, 1.0, 2.0], logfilename='log_lidvae_lm_mnist.csv', resultname='result_lidvae_lm_mnist', log_mse=True)
+    exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.0, 0.1, 0.2, 0.4, 1.0, 2.0], alpha_list=[0.0, 0.01, 0.1, 0.2, 0.4, 1.0], logfilename='log_lrvae_mnist.csv', resultname='result_lrvae_mnist')
+    #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='log_lidvae_lm_mnist.csv', resultname='result_lidvae_lm_mnist', log_mse=True)
 
-    # Test
-    #exp_lrvae(1, 0, 128, exp_data, beta_list=[1.0], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11071629_b=1.0_a=0.1/model_99.pt')
-    #exp_vae(1, 0, 128, exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11081009_b=1.0/model_99.pt')
-    #exp_lrvae(1, 0, 128, exp_data, beta_list=[2.0], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11071643_b=2.0_a=0.1/model_99.pt')
-    #exp_vae(1, 0, 128, exp_data, beta_list=[2.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11071514_b=2.0/model_99.pt')
-    #exp_lrvae(1, 0, 128, exp_data, beta_list=[3.0], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11081131_b=3.0_a=0.1/model_99.pt')
-    #exp_vae(1, 0, 128, exp_data, beta_list=[3.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11081127_b=3.0/model_99.pt')
-    #exp_vae(1, 0, 128, exp_data, beta_list=[2.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_mnist_lidvae/_b=2.0/model_99.pt')
-    #exp_lidvae(1, 0, exp_data, beta_list=[2.0], il_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_mnist/LIDVAE 11081621_b=2.0_il=0.05/model_99.pt')
+    # Test    
+    #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11071505_b=1.0/model_99.pt')
+    #exp_lrvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[0.1], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11081131_b=3.0_a=0.1/model_99.pt')
+    #exp_lidvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_lm_mnist/LIDVAE 11151324_b=10.0_logmse_il=0.0/model_99.pt')
 
     # Curve Scatter
-    rec_lr_scatter_visualization(model_dict, exp_data, "cuda")
+    #rec_lr_scatter_visualization(model_dict, exp_data, "cuda")
 
 
 

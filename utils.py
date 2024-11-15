@@ -3,6 +3,10 @@ import torchvision
 import os
 import csv
 import math
+import matplotlib.pyplot as plt
+import numpy as np
+from torch.utils.data import DataLoader
+from sklearn.manifold import TSNE
 
 def reparameterize(mu, logvar, nsamples=1):
     """(Wang et al.) sample from posterior Gaussian family"""
@@ -139,9 +143,7 @@ def log_unified(path, list_elements, list_names, logfilename='unified_log.csv'):
         writer.writerow(list_elements)
 
 
-import matplotlib.pyplot as plt
-import numpy as np
-from torch.utils.data import DataLoader
+
 def pca_visualization(model, loader_test, device, epoch, name, resultname, prior=False, color_rule='class'):
 
     os.makedirs("./results/"+resultname+"/" + name + "/pca", exist_ok=True)
@@ -157,19 +159,19 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     x, y = next(iter(loader_test))
     x = x.to(device)
     #result = model(x)
-    z, var = model.encode(x) # z:mu
+    mu, var = model.encode(x)
 
     if prior == True:
-        z = torch.randn_like(z).to(z.device)
-        var = torch.zeros_like(z).to(z.device)
+        mu = torch.randn_like(mu).to(mu.device)
+        var = torch.zeros_like(mu).to(mu.device)
 
-    z = z.cpu().detach().numpy()
+    mu = mu.cpu().detach().numpy()
     var = var.cpu().detach().numpy()
 
     # Compute covariance matrix
-    z_mean = np.mean(z, axis=0)
-    z_centered = z - z_mean
-    cov_matrix = np.dot(z_centered.T, z_centered) / (z_centered.shape[0] - 1)
+    mu_mean = np.mean(mu, axis=0)
+    mu_centered = mu - mu_mean
+    cov_matrix = np.dot(mu_centered.T, mu_centered) / (mu_centered.shape[0] - 1)
 
     # Eigen decomposition
     eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
@@ -180,11 +182,11 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     eigenvectors = eigenvectors[:, sorted_indices]
 
     # Project data onto the first two principal components
-    z_pca = np.dot(z_centered, eigenvectors[:, :2])
+    mu_pca = np.dot(mu_centered, eigenvectors[:, :2])
 
 
     plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(z_pca[:, 0], z_pca[:, 1], c=var.mean(1), cmap='coolwarm', vmin=0, vmax=0.1)
+    scatter = plt.scatter(mu_pca[:, 0], mu_pca[:, 1], c=var.mean(1), cmap='coolwarm', vmin=0, vmax=0.1)
     plt.colorbar(scatter, label='Average Variance')
     plt.xlim([-4, 4])
     plt.ylim([-4, 4])
@@ -194,17 +196,21 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
         plt.savefig("./results/"+resultname+"/" + name + "/pca/" + str(epoch) + "_pca_v.png")
     plt.close()
 
-
-    plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(z_pca[:, 0], z_pca[:, 1], c=y, cmap='tab10')
-    plt.colorbar(scatter, label='Class')
-    plt.xlim([-4, 4])
-    plt.ylim([-4, 4])
-    if prior == True:
-        pass
-    else:
-        plt.savefig("./results/"+resultname+"/" + name + "/pca/" + str(epoch) + "_pca_c.png")
-    plt.close()
+    try:
+        tsne = TSNE(n_components=2, random_state=0)
+        mu_tsne = tsne.fit_transform(mu)
+        plt.figure(figsize=(10, 8))
+        scatter = plt.scatter(mu_tsne[:, 0], mu_tsne[:, 1], c=y, cmap='tab10')
+        plt.colorbar(scatter, label='Class')
+        plt.xlim([-50, 50])
+        plt.ylim([-50, 50])
+        if prior == True:
+            pass
+        else:
+            plt.savefig("./results/"+resultname+"/" + name + "/pca/" + str(epoch) + "_tsne_c.png")
+        plt.close()
+    except Exception as e:
+        print(f"Error in tsne: {e}")
 
 
 # ./results 아래에 있는 모든 결과들을 불러와서, 각각의 reconstruction loss와 latent reconstruction loss를 scatter plot으로 그려주는 함수
