@@ -29,7 +29,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         loss_reg_total += float(loss_reg)
         loss_lr_total += float(loss_lr)
 
-    if save_img == True and (epoch & (epoch - 1)) == 0:
+    if (save_img == True) and (((epoch & (epoch - 1)) == 0) or (epoch % 100 == 99)):
         os.makedirs("./results/"+resultname+"/" + name + "/valontr", exist_ok=True)
         for _ in tqdm(range(1), leave=False, desc="Test"):
             x, _ = next(iter(loader_test))
@@ -65,8 +65,10 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
             )
 
     # PCA visualization
-    if pca == True:
+    if pca == True and ((epoch & (epoch - 1)) == 0 or epoch % 100 == 99):
         pca_visualization(model, loader_test, device, epoch, name, resultname)
+        if epoch == 0:
+            pca_visualization(model, loader_test, device, epoch, name, resultname, prior=True)
         
     return loss_total / len(loader_test), loss_recon_total / len(loader_test), loss_reg_total / len(loader_test), loss_lr_total / len(loader_test)
 
@@ -183,11 +185,10 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         writer.add_scalar("recon/train", loss_recon_total / len(loader_train), epoch)
         writer.add_scalar("reg/train", loss_reg_total / len(loader_train), epoch)
         
-        do_pca = ((epoch & (epoch - 1)) == 0) or (epoch % 100 == 0) # do pca if epoch is power of 2
-        loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, pca=do_pca)
+        loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, pca=True)
 
         writer.add_scalar("loss/test", loss_total / len(loader_test), epoch)
-        if epoch % 100 == 1 or (epoch & (epoch - 1)) == 0:
+        if (epoch % 100 == 99) or ((epoch & (epoch - 1)) == 0):
             torch.save(
                 model.state_dict(), "./results/" + resultname + "/" + name + "/params/model_" + str(epoch) + ".pt"
             )
@@ -272,11 +273,11 @@ def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], pz=True, logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None):
+def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], z_source='Ex', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None):
     for a in alpha_list:
         for b in beta_list:
             for i in range(niter):
-                train_and_test(Model.LRVAE(beta=b, alpha=a, from_pz=pz, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
+                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
@@ -297,22 +298,18 @@ if __name__ == "__main__":
 
     # Train
     #exp_vae(1, exp_epochs=1, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
-    #exp_vae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[3.0], logfilename='log_vae_mnist.csv', resultname='result_vae_mnist')
-    exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.0, 0.1, 0.2, 0.4, 1.0, 2.0], alpha_list=[0.0, 0.01, 0.1, 0.2, 0.4, 1.0], logfilename='log_lrvae_mnist.csv', resultname='result_lrvae_mnist')
+    exp_vae(1, exp_epochs=exp_epochs, batch_size=64, exp_data=exp_data, beta_list=[2000], logfilename='log_vae_mse_mnist.csv', resultname='result_vae_mse_mnist')
+    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 0.4, 2.0], alpha_list=[0.01, 0.1, 0.3, 1.0], logfilename='log_lrvae_Ex_mnist.csv', resultname='result_lrvae_Ex_mnist')
     #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='log_lidvae_lm_mnist.csv', resultname='result_lidvae_lm_mnist', log_mse=True)
 
     # Test    
-    #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11071505_b=1.0/model_99.pt')
+    #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1000.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11190951_b=1000.0/params/model_64.pt')
+    #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11181447_b=1.0/params/model_64.pt')
     #exp_lrvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[0.1], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11081131_b=3.0_a=0.1/model_99.pt')
     #exp_lidvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_lm_mnist/LIDVAE 11151324_b=10.0_logmse_il=0.0/model_99.pt')
 
     # Curve Scatter
     #rec_lr_scatter_visualization(model_dict, exp_data, "cuda")
-
-
-
-
-
 
     #exp_vae_ep(4, exp_epochs, 128, 'mnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_mnist_vaeep')
     #exp_vae_ep(4, exp_epochs, 128, 'fashionmnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_fashionmnist_vaeep')

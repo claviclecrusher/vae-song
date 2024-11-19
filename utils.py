@@ -3,6 +3,7 @@ import torchvision
 import os
 import csv
 import math
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
@@ -143,8 +144,14 @@ def log_unified(path, list_elements, list_names, logfilename='unified_log.csv'):
         writer.writerow(list_elements)
 
 
+def logscale_plt_color_map(original_cmap_name):
+    """Create a new colormap with log scale"""
+    origin = matplotlib.cm.get_cmap(original_cmap_name, 256)
+    newcolors = origin(np.logspace(0, 1, 256) / 10)
+    return matplotlib.colors.ListedColormap(newcolors)
 
-def pca_visualization(model, loader_test, device, epoch, name, resultname, prior=False, color_rule='class'):
+
+def pca_visualization(model, loader_test, device, epoch, name, resultname, prior=False):
 
     os.makedirs("./results/"+resultname+"/" + name + "/pca", exist_ok=True)
     model.eval()
@@ -161,12 +168,12 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     #result = model(x)
     mu, var = model.encode(x)
 
-    if prior == True:
-        mu = torch.randn_like(mu).to(mu.device)
-        var = torch.zeros_like(mu).to(mu.device)
-
     mu = mu.cpu().detach().numpy()
     var = var.cpu().detach().numpy()
+
+    if prior == True:
+        mu = np.random.randn(*mu.shape)
+        var = np.zeros_like(mu)
 
     # Compute covariance matrix
     mu_mean = np.mean(mu, axis=0)
@@ -181,19 +188,58 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     eigenvalues = eigenvalues[sorted_indices]
     eigenvectors = eigenvectors[:, sorted_indices]
 
-    # Project data onto the first two principal components
-    mu_pca = np.dot(mu_centered, eigenvectors[:, :2])
+    mu_pca = np.dot(mu_centered, eigenvectors)
+    mu_pca_min, mu_pca_max = mu_pca.min(), mu_pca.max()
+    mu_min, mu_max = mu.min(), mu.max()
+    v_min, v_max = var.min(), var.max()
+    print(f" var min: {v_min}, var max: {v_max}, var mean: {var.mean()}")
 
-
-    plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(mu_pca[:, 0], mu_pca[:, 1], c=var.mean(1), cmap='coolwarm', vmin=0, vmax=0.1)
-    plt.colorbar(scatter, label='Average Variance')
-    plt.xlim([-4, 4])
-    plt.ylim([-4, 4])
+    # Plot 2D scatter for prior distribution
     if prior == True:
-        plt.savefig("./results/"+resultname+"/" + name + "/pca/" + "prior_pca.png")
-    else:
-        plt.savefig("./results/"+resultname+"/" + name + "/pca/" + str(epoch) + "_pca_v.png")
+        plt.figure(figsize=(10, 8))
+        scatter = plt.scatter(mu_pca[:, 0], mu_pca[:, 1], c=var.mean(1), cmap='coolwarm', vmin=0, vmax=1.0)
+        #plt.colorbar(scatter, label='Average Variance')
+        #plt.xlim([-4, 4])
+        #plt.ylim([-4, 4])
+        plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_prior.png")
+        plt.close()
+        return
+
+    # Plot 1D scatter for each principal component
+    MAX_1D_PLOT_ITER = 32
+    zero_array = np.zeros_like(mu_pca[:, 0])
+    num_components = min(mu_pca.shape[1], MAX_1D_PLOT_ITER)
+    fig, axes = plt.subplots(num_components, 1, figsize=(15, 10), sharex=True)
+    plt.yticks([])
+    for i in range(num_components):
+        axes[i].scatter(mu_pca[:, i], zero_array, c=var[:,i], cmap='viridis', vmin=0, vmax=1.0)
+        axes[i].get_yaxis().set_visible(False)  # Hide the y-axis
+        axes[i].set_xlim([mu_pca_min, mu_pca_max])
+    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_pca_all.png")
+    plt.close()
+
+    # Plot 1D scatter for each actual channel
+    MAX_1D_PLOT_ITER = 32
+    zero_array = np.zeros_like(mu[:, 0])
+    num_components = min(mu.shape[1], MAX_1D_PLOT_ITER)
+    fig, axes = plt.subplots(num_components, 1, figsize=(15, 10), sharex=True)
+    plt.yticks([])
+    for i in range(num_components):
+        #axes[i].scatter(mu[:, i], zero_array, c=var[:,i], cmap=logscale_plt_color_map('viridis'), vmin=0, vmax=1.0)
+        axes[i].scatter(mu[:, i], zero_array, c=var[:,i], cmap='viridis', vmin=v_min, vmax=v_max)
+        axes[i].get_yaxis().set_visible(False)  # Hide the y-axis
+        axes[i].set_xlim([mu_min, mu_max])
+    #plt.colorbar(axes, label='Average Variance')
+    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_channels_all.png")
+    plt.close()
+
+    # Plot 2D scatter for the first two principal components
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(mu_pca[:, 0], mu_pca[:, 1], c=var.mean(1), cmap='viridis', vmin=v_min, vmax=v_max)
+    plt.colorbar(scatter, label='Average Variance')
+    #plt.xlim([-4, 4])
+    #plt.ylim([-4, 4])
+    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_pca_v.png")
     plt.close()
 
     try:
@@ -204,13 +250,12 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
         plt.colorbar(scatter, label='Class')
         plt.xlim([-50, 50])
         plt.ylim([-50, 50])
-        if prior == True:
-            pass
-        else:
-            plt.savefig("./results/"+resultname+"/" + name + "/pca/" + str(epoch) + "_tsne_c.png")
+        plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_tsne_c.png")
         plt.close()
     except Exception as e:
         print(f"Error in tsne: {e}")
+
+    return
 
 
 # ./results 아래에 있는 모든 결과들을 불러와서, 각각의 reconstruction loss와 latent reconstruction loss를 scatter plot으로 그려주는 함수

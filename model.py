@@ -1,10 +1,23 @@
 import torch
 import module
 import torch.nn.functional as F
+import torch.nn.init as init
+
 
 class VAE(torch.nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.Linear):
+                init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+            elif isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.BatchNorm1d):
+                init.constant_(m.weight, 1)
+                init.constant_(m.bias, 0)
 
     def encode(self, input):
         raise NotImplementedError
@@ -127,6 +140,8 @@ class VanillaVAE(VAE):
         ret = self.encoder(input)
         #return ret.split(ret.shape[1] // 2, 1)
         mu, var = ret.split(ret.shape[1] // 2, 1)
+        if self.beta == 0.0:
+            return mu, torch.zeros_like(var)
         return mu, F.softplus(var) # prevent var from being negative
 
     def decode(self, input):
@@ -134,7 +149,8 @@ class VanillaVAE(VAE):
     
     def forward(self, input, latent_recon=False):
         if latent_recon:
-            return self.forward_Ex(input)
+            return self.forward_qzx(input) # should be equal to lrvae source
+            # return self.forward_Ex(input)
         else:
             return self.forward_vae(input)
 
@@ -149,6 +165,13 @@ class VanillaVAE(VAE):
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, z, z_recon
+    
+    def forward_qzx(self, input): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
+        mu, log_var = self.encode(input)
+        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        recon = self.decode(z)
+        z_recon, _ = self.encode(recon)
+        return recon, mu, log_var, mu, z_recon
 
     def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
         loss_recon = (
@@ -184,7 +207,7 @@ class LRVAE(VAE):
         alpha=0.01,
         is_log_mse=False,
         dataset=None,
-        from_pz=True,
+        z_source='qzx',
         bal_alpha=True
     ):
         """
@@ -206,7 +229,7 @@ class LRVAE(VAE):
         self.latent_channel = latent_channel
         self.beta = beta
         self.alpha = alpha
-        self.from_pz = from_pz
+        self.z_source = z_source
         self.wu_alpha = 0.0
         self.is_log_mse = is_log_mse
         self.balanced_alpha = bal_alpha
@@ -288,10 +311,15 @@ class LRVAE(VAE):
         return self.decoder(input)
 
     def forward(self, input, latent_recon=True):
-        if self.from_pz:
+        if self.z_source == 'pz':
             return self.forward_pz(input)
-        else:
+        elif self.z_source == 'qzx':
+            return self.forward_qzx(input)
+        elif self.z_source == 'Ex':
             return self.forward_Ex(input)
+        else:
+            print('Invalid z_source')
+            exit(1)
     
     def forward_Ex(self, input): # Latent reconstruction, z is encoded from x
         mu, log_var = self.encode(input)
@@ -299,6 +327,13 @@ class LRVAE(VAE):
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, z, z_recon
+    
+    def forward_qzx(self, input): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
+        mu, log_var = self.encode(input)
+        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        recon = self.decode(z)
+        z_recon, _ = self.encode(recon)
+        return recon, mu, log_var, mu, z_recon
 
     def forward_pz(self, input): # Latent reconstruction, z is sampled from p(z)
         mu, log_var = self.encode(input)
@@ -473,7 +508,8 @@ class LIDVAE(VAE):
    
     def forward(self, input, latent_recon=False):
         if latent_recon:
-            return self.forward_Ex(input)
+            return self.forward_qzx(input) # should be equal to lrvae source
+            # return self.forward_Ex(input)
         else:
             return self.forward_vae(input)
 
@@ -488,6 +524,13 @@ class LIDVAE(VAE):
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, z, z_recon
+    
+    def forward_qzx(self, input): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
+        mu, log_var = self.encode(input)
+        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        recon = self.decode(z)
+        z_recon, _ = self.encode(recon)
+        return recon, mu, log_var, mu, z_recon
 
     def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
         loss_recon = (
