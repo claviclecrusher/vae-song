@@ -10,7 +10,7 @@ import model as Model
 from utils import pca_visualization
 import utils
 
-def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, pca=True):
+def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, visualize=True):
     model.eval() #
     loss_total = 0.0
     loss_recon_total = 0.0
@@ -29,12 +29,13 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         loss_reg_total += float(loss_reg)
         loss_lr_total += float(loss_lr)
 
-    if (save_img == True) and (((epoch & (epoch - 1)) == 0) or (epoch % 100 == 99)):
+    if save_img: # == True) and (((epoch & (epoch - 1)) == 0) or (epoch % 100 == 99)):
         os.makedirs("./results/"+resultname+"/" + name + "/valontr", exist_ok=True)
         for _ in tqdm(range(1), leave=False, desc="Test"):
             x, _ = next(iter(loader_test))
             x = x.requires_grad_(True).to(device)
             result = model(x)
+            result_wo_sampling = model(x, latent_rand_sampling=False)
 
             # Save reconstruction example
             save_image(
@@ -46,6 +47,12 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
             save_image(
                 result[0][:256].clip(0, 1),
                 "./results/"+resultname+"/" + name + "/valontr/" + str(epoch) + "_recon.png",
+                normalize=True,
+                nrow=16,
+            )
+            save_image(
+                result_wo_sampling[0][:256].clip(0, 1),
+                "./results/"+resultname+"/" + name + "/valontr/" + str(epoch) + "_recon_wos.png",
                 normalize=True,
                 nrow=16,
             )
@@ -65,7 +72,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
             )
 
     # PCA visualization
-    if pca == True and ((epoch & (epoch - 1)) == 0 or epoch % 100 == 99):
+    if visualize: # and ((epoch & (epoch - 1)) == 0 or epoch % 100 == 99):
         pca_visualization(model, loader_test, device, epoch, name, resultname)
         if epoch == 0:
             pca_visualization(model, loader_test, device, epoch, name, resultname, prior=True)
@@ -105,6 +112,25 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         )
         train_dataset = torchvision.datasets.FashionMNIST(root="dataset/", transform=transforms, download=True)
         test_dataset = torchvision.datasets.FashionMNIST(root="dataset/", transform=transforms, train=False)
+    elif dataset_name == 'cifar10':
+        transforms = torchvision.transforms.Compose(
+            [
+                torchvision.transforms.RandomHorizontalFlip(),
+                torchvision.transforms.Resize(32),
+                torchvision.transforms.ToTensor(),
+            ]
+        )
+        train_dataset = torchvision.datasets.CIFAR10(root="dataset/", transform=transforms, download=True)
+        test_dataset = torchvision.datasets.CIFAR10(root="dataset/", transform=transforms, train=False)
+    elif dataset_name == 'omniglot':
+        transforms = torchvision.transforms.Compose(
+            [
+                torchvision.transforms.Resize(28),
+                torchvision.transforms.ToTensor(),
+            ]
+        )
+        train_dataset = torchvision.datasets.Omniglot(root="dataset/", transform=transforms, download=True)
+        test_dataset = torchvision.datasets.Omniglot(root="dataset/", transform=transforms, background=False, download=True)
     else:
         print(dataset_name, "is not implemented")
         exit()
@@ -142,7 +168,8 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         exit()
 
     name = type(model).__name__ + datetime.now().strftime(" %m%d%H%M")
-    name += "_b=" + str(float(model.beta))
+    if not type(model).__name__.startswith("NaiveAE"):
+        name += "_b=" + str(float(model.beta))
     if type(model).__name__.startswith("LR"):
         name += "_a="+str(model.alpha)
     if model.is_log_mse == True:
@@ -185,7 +212,8 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         writer.add_scalar("recon/train", loss_recon_total / len(loader_train), epoch)
         writer.add_scalar("reg/train", loss_reg_total / len(loader_train), epoch)
         
-        loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, pca=True)
+        visualize, save_img = (True, True) if ((epoch == (epochs-1)) or ((epoch & (epoch - 1)) == 0)) else (False, False)
+        loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, save_img=save_img, visualize=visualize)
 
         writer.add_scalar("loss/test", loss_total / len(loader_test), epoch)
         if (epoch % 100 == 99) or ((epoch & (epoch - 1)) == 0):
@@ -194,7 +222,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
             )
 
     epoch = epochs
-    loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, pca=True)
+    #loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, visualize=True)
 
     # Generate samples to calculate FID score
     # We cannot use no_grad, since LIDVAE requires calculation of gradient
@@ -256,7 +284,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
                                 logfilename=logfilename)
 
 
-def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.4], log_mse=False,
+def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.4], log_mse=False,
                il_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0], logfilename='log_lidvae.csv', resultname='res_lidvae', pt_param=None):
     for b in beta_list:
         for il in il_list:
@@ -266,22 +294,28 @@ def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_l
     return
 
 
-def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae', pt_param=None):
+def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae', pt_param=None, decoder_type='mlp'):
     for b in beta_list:
         for i in range(niter):
-            train_and_test(Model.VanillaVAE(beta=b, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
+            train_and_test(Model.VanillaVAE(beta=b, dataset=exp_data, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], z_source='Ex', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None):
+def exp_nae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, logfilename='log_naive_ae.csv', resultname='res_naive_ae', pt_param=None, decoder_type='mlp'):
+    for i in range(niter):
+        train_and_test(Model.NaiveAE(dataset=exp_data, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
+                           dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
+    return
+
+def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], z_source='Ex', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None, pwise_reg=False, decoder_type='mlp'):
     for a in alpha_list:
         for b in beta_list:
             for i in range(niter):
-                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
+                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, dataset=exp_data, pwise_reg=pwise_reg, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_vae_conv(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta_list=[0.5, 1.0, 2.0, 4.0, 8.0, 16.0], 
+def exp_vae_conv(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.5, 1.0, 2.0, 4.0, 8.0, 16.0], 
                  logfilename='log_conv.csv', resultname='res_conv', pt_param=None):
     for b in beta_list:
         for i in range(niter):
@@ -294,12 +328,15 @@ def exp_vae_conv(niter=1, exp_epochs=100, batch_size=128, exp_data='mnist', beta
 if __name__ == "__main__":
     exp_epochs = 100 # 0 for only testing
     exp_data = 'mnist'
-    model_dict = {"vae": Model.VanillaVAE(dataset=exp_data), "lrvae": Model.LRVAE(dataset=exp_data), "lidvae":Model.LIDVAE(dataset=exp_data)}
+    decoder_type = 'conv'
+    pwr = True
 
     # Train
     #exp_vae(1, exp_epochs=1, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
-    exp_vae(1, exp_epochs=exp_epochs, batch_size=64, exp_data=exp_data, beta_list=[2000], logfilename='log_vae_mse_mnist.csv', resultname='result_vae_mse_mnist')
-    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 0.4, 2.0], alpha_list=[0.01, 0.1, 0.3, 1.0], logfilename='log_lrvae_Ex_mnist.csv', resultname='result_lrvae_Ex_mnist')
+    #exp_nae(1, exp_epochs=exp_epochs, batch_size=64, exp_data=exp_data, logfilename=f"log_naive_ae_{decoder_type}_{exp_data}.csv", resultname=f"result_naive_ae_{decoder_type}_{exp_data}")
+    #exp_vae(1, exp_epochs=exp_epochs, batch_size=64, exp_data=exp_data, beta_list=[0.1, 1.0], logfilename=f"log_vae_{decoder_type}_{exp_data}.csv", resultname=f"result_vae_{decoder_type}_{exp_data}")
+    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 1.0], alpha_list=[0.01, 0.1, 0.3, 1.0], pwise_reg=pwr, logfilename=f'log_lrvae_Ex_{decoder_type}_{exp_data}_pwr{pwr}.csv', resultname=f'result_lrvae_Ex_{decoder_type}_{exp_data}_pwr{pwr}')
+    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.0, 0.2, 1.0], alpha_list=[0.0, 0.2], logfilename=f"log_lrvae_Ex_pwr_{exp_data}.csv", resultname=f"result_lrvae_Ex_pwr_{exp_data}", pwise_reg=True)
     #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='log_lidvae_lm_mnist.csv', resultname='result_lidvae_lm_mnist', log_mse=True)
 
     # Test    
@@ -309,31 +346,10 @@ if __name__ == "__main__":
     #exp_lidvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_lm_mnist/LIDVAE 11151324_b=10.0_logmse_il=0.0/model_99.pt')
 
     # Curve Scatter
+    #model_dict = {"vae": Model.VanillaVAE(dataset=exp_data), "lrvae": Model.LRVAE(dataset=exp_data), "lidvae":Model.LIDVAE(dataset=exp_data)}
     #rec_lr_scatter_visualization(model_dict, exp_data, "cuda")
 
-    #exp_vae_ep(4, exp_epochs, 128, 'mnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_mnist_vaeep')
-    #exp_vae_ep(4, exp_epochs, 128, 'fashionmnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_fashionmnist_vaeep')
-    #exp_vae_ep(4, exp_epochs, 64, 'celeba', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], logfilename='log_vaeep.csv', resultname='result_celeba_vaeep')
-
-    #exp_lidvae(1, exp_epochs, 128, 'mnist', beta_list=[1.0, 3.0], il_list=[0.0, 0.5, 1.0, 1.5], logfilename='log_lidvae.csv', resultname='result_mnist_ilidvae')
-    #exp_lidvae(4, exp_epochs, 128, 'celeba', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], il_list=[0.0, 0.1, 0.2, 0.4], logfilename='lidvae_celeba.csv', resultname='ilidvae_celeba')
-
-    #exp_lrvae_ep(4, exp_epochs, 128, 'mnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], alpha_list=[0.01, 0.1, 0.4, 1.0],
-    #           logfilename='log_lrvae.csv', resultname='result_mnist_lrvae')
-    #exp_lrvae_ep(4, exp_epochs, 128, 'fashionmnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], alpha_list=[0.01, 0.1, 0.4, 1.0],
-    #           logfilename='log_lrvae.csv', resultname='result_fashionmnist_lrvae')
-
-    #exp_vae_conv(4, exp_epochs, 128, 'mnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], 
-    #           logfilename='log_conv.csv', resultname='result_mnist_conv')
-    #exp_vae_conv(4, exp_epochs, 128, 'fashionmnist', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], 
-    #           logfilename='log_conv.csv', resultname='result_fashionmnist_conv')
-    #exp_vae_conv(4, exp_epochs, 64, 'celeba', beta_list=[0.1, 0.5, 1.0, 2.0, 4.0], 
-    #           logfilename='log_conv.csv', resultname='result_celeba_conv')
-
-    #exp_vae(beta_list=[1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0])
-    #exp_lrvae(niter=2, beta_list=[0.4], alpha_list=[1.0], pz=False, logfilename='log_lrvae_mnist_qzx_ba.csv', resultname='lrvae_mnist_qzx_ba')
-    #exp_lidvae()
-    #exp_lidvae(1, 1, exp_data, beta_list=[0.5, 1.0, 2.0, 4.0], il_list=[0.0, 0.5, 1.0, 1.5], logfilename='log_mnist_lidvae.csv', resultname='result_mnist_ilid')
+    # test
     #train_and_test(Model.LRVAE_EP(is_log_mse=False, beta=1.0, alpha=0.01), epochs=2, dataset_name=exp_data, logfilename='TEST.csv', resultname='TEST')
     #train_and_test(Model.VanillaVAE(beta=0.1, dataset=exp_data), epochs=exp_epochs, dataset_name=exp_data, logfilename='TEST.csv', resultname='TEST')
     #train_and_test(Model.VanillaVAE_EP(beta=0.1, dataset=exp_data), epochs=exp_epochs, dataset_name=exp_data, logfilename='TEST.csv', resultname='TEST')

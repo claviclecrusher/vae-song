@@ -126,6 +126,8 @@ def measure_pc(model, loader, device):
         z_input = res_list[3] if len(res_list)>3 else None
         z_recon = res_list[4] if len(res_list)>4 else None
         loss, loss_rec, loss_reg, loss_lr = model.loss(data[0].to(device), recon, mu, log_var, z_input=z_input, z_recon=z_recon)
+        if not torch.is_tensor(log_var): # for naive ae
+            return 0, 0, 0, 0
         au_sum += calc_au_per_batch(mu) # unstable result
         kl_sum += kld(mu, log_var)
         mi_sum += calc_mi(mu, log_var)
@@ -169,7 +171,10 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     mu, var = model.encode(x)
 
     mu = mu.cpu().detach().numpy()
-    var = var.cpu().detach().numpy()
+    if torch.is_tensor(var):
+        var = var.cpu().detach().numpy()
+    else:
+        var = np.zeros_like(mu)
 
     if prior == True:
         mu = np.random.randn(*mu.shape)
@@ -192,7 +197,7 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     mu_pca_min, mu_pca_max = mu_pca.min(), mu_pca.max()
     mu_min, mu_max = mu.min(), mu.max()
     v_min, v_max = var.min(), var.max()
-    print(f" var min: {v_min}, var max: {v_max}, var mean: {var.mean()}")
+    #print(f" var min: {v_min}, var max: {v_max}, var mean: {var.mean()}")
 
     # Plot 2D scatter for prior distribution
     if prior == True:
@@ -254,6 +259,7 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
         plt.close()
     except Exception as e:
         print(f"Error in tsne: {e}")
+        exit()
 
     return
 

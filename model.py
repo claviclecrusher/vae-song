@@ -25,7 +25,7 @@ class VAE(torch.nn.Module):
     def decode(self, input):
         raise NotImplementedError
 
-    def forward(self, input):
+    def forward(self, input, latent_rand_sampling=True):
         raise NotImplementedError
 
     def loss(self, *args):
@@ -35,39 +35,65 @@ class VAE(torch.nn.Module):
         return False
 
 
-class VanillaVAE(VAE):
+
+
+
+class MLPVAE(VAE):
 
     def __init__(
         self,
         in_channel=1,
         latent_channel=32,
         hidden_channels=[32, 64, 128],
+        icnn_channels=[512, 1024],
         input_dim=28,
         beta=1.0,
+        alpha=0.0,
         is_log_mse=False,
         dataset=None,
+        z_source='qzx',
+        bal_alpha=True,
+        pwise_reg=False,
+        variational=True,
+        decoder_type='mlp',
     ):
         """
-        Conventional VAE with residual-conv encoder and MLP decoder, for image dataset.
-        Note that decoder is 4-layer MLP, to avoid using convolution and its transpose.
-        Beta and logMSE features are ready-to-use, but are disabled by default.
+        VAE with residual-conv encoder and MLP decoder, for image dataset.
         """
         if dataset == "celeba":
             in_channel = 3
             latent_channel = 64
             hidden_channels = [32, 64, 128, 256]
             input_dim = 64
-        elif dataset == "mnist" or "fashionmnist":
+        elif (dataset == "mnist") or (dataset == "fashionmnist"):
             in_channel = 1
             latent_channel = 32
             hidden_channels = [32, 64, 128]
             input_dim = 28
+        elif dataset == "cifar10":
+            in_channel = 3
+            latent_channel = 128
+            hidden_channels = [32, 64, 128, 256]
+            input_dim = 32
+        elif dataset == "omniglot":
+            in_channel = 1
+            latent_channel = 128
+            hidden_channels = [32, 64, 128, 256]
+            input_dim = 28
+        else:
+            raise ValueError(f"Invalid dataset: {dataset}")
 
         super(VAE, self).__init__()
 
+        self.variational = variational # if False, it is just an autoencoder
         self.latent_channel = latent_channel
         self.beta = beta
+        self.alpha = alpha
+        self.z_source = z_source
+        self.wu_alpha = 0.0
         self.is_log_mse = is_log_mse
+        self.balanced_alpha = bal_alpha
+        self.pwise_reg = pwise_reg
 
         fc_dim = input_dim
         transpose_padding = []
@@ -77,11 +103,28 @@ class VanillaVAE(VAE):
         transpose_padding.reverse()
 
         # Make encoder
-        self.encoder = []
-        last_channel = in_channel
+        self.encoder = self.make_encoder(hidden_channels, in_channel, latent_channel, fc_dim)
 
+        # Make decoder
+        if decoder_type == 'mlp':
+            self.decoder = self.make_decoder(in_channel, latent_channel, input_dim)
+        elif decoder_type == 'conv':
+            hidden_channels.reverse()
+            self.decoder = self.make_decoder_conv(in_channel, latent_channel, hidden_channels, fc_dim, transpose_padding)
+            hidden_channels.reverse()
+        else:
+            print(f'Invalid decoder type: {decoder_type}')
+            exit()
+
+        return
+
+        
+
+    def make_encoder(self, hidden_channels, in_channel, latent_channel, fc_dim):
+        last_channel = in_channel
+        encoder = []
         for channel in hidden_channels:
-            self.encoder.append(
+            encoder.append(
                 torch.nn.Sequential(
                     module.ResidualBlock(last_channel, channel, 2),
                     module.ResidualBlock(channel, channel, 1),
@@ -89,7 +132,7 @@ class VanillaVAE(VAE):
             )
             last_channel = channel
 
-        self.encoder.append(
+        encoder.append(
             torch.nn.Sequential(
                 torch.nn.Flatten(),
                 torch.nn.Linear(last_channel * (fc_dim**2), latent_channel * 2),
@@ -98,15 +141,15 @@ class VanillaVAE(VAE):
                 torch.nn.Linear(latent_channel * 2, latent_channel * 2),
             )
         )
-        self.encoder = torch.nn.Sequential(*self.encoder)
-
-        # Make decoder
-        self.decoder = []
-
+        encoder = torch.nn.Sequential(*encoder)
+        return encoder
+    
+    def make_decoder(self, in_channel, latent_channel, input_dim):
         # First layer: half of final dimension
+        decoder = []
         last_channel = latent_channel
         channel = (input_dim**2) * in_channel // 2
-        self.decoder.append(
+        decoder.append(
             torch.nn.Sequential(
                 torch.nn.Linear(last_channel, channel),
                 torch.nn.BatchNorm1d(channel),
@@ -120,7 +163,7 @@ class VanillaVAE(VAE):
         # Second and last layer: full dimension
         last_channel = channel
         channel = (input_dim**2) * in_channel
-        self.decoder.append(
+        decoder.append(
             torch.nn.Sequential(
                 torch.nn.Linear(last_channel, channel),
                 torch.nn.BatchNorm1d(channel),
@@ -130,48 +173,117 @@ class VanillaVAE(VAE):
         )
 
         # Unflatten to shape of image
-        self.decoder.append(torch.nn.Unflatten(1, (in_channel, input_dim, input_dim)))
+        decoder.append(torch.nn.Unflatten(1, (in_channel, input_dim, input_dim)))
 
         # Note that there is no range mapping!
         # Use Clip or Sigmoid if you want
-        self.decoder = torch.nn.Sequential(*self.decoder)
+        decoder = torch.nn.Sequential(*decoder)
+        return decoder
+    
+
+    def make_decoder_conv(self, in_channel, latent_channel, hidden_channels, fc_dim, transpose_padding):
+        decoder = []
+        last_channel = hidden_channels[0]
+
+        decoder.append(
+            torch.nn.Sequential(
+                torch.nn.Linear(latent_channel, last_channel * (fc_dim**2)),
+                torch.nn.BatchNorm1d(last_channel * (fc_dim**2)),
+                torch.nn.LeakyReLU(),
+                torch.nn.Unflatten(1, (last_channel, fc_dim, fc_dim)),
+                module.ResidualBlock(last_channel, last_channel, 1),
+            )
+        )
+
+        for channel, pad in zip(hidden_channels[1:], transpose_padding[:-1]):
+            decoder.append(
+                torch.nn.Sequential(
+                    torch.nn.ConvTranspose2d(last_channel, channel, 3, 2, 1, pad),
+                    torch.nn.BatchNorm2d(channel),
+                    torch.nn.LeakyReLU(),
+                )
+            )
+            last_channel = channel
+
+        decoder.append(
+            torch.nn.Sequential(
+                torch.nn.ConvTranspose2d(
+                    last_channel, last_channel, 3, 2, 1, transpose_padding[-1]
+                ),
+                torch.nn.BatchNorm2d(last_channel),
+                torch.nn.LeakyReLU(),
+                torch.nn.ConvTranspose2d(last_channel, in_channel, 3, 1, 1),
+            )
+        )
+        # Note that there is no range mapping!
+        # Use Clip or Sigmoid if you want
+        decoder = torch.nn.Sequential(*decoder)
+        return decoder
+    
 
     def encode(self, input):
         ret = self.encoder(input)
         #return ret.split(ret.shape[1] // 2, 1)
         mu, var = ret.split(ret.shape[1] // 2, 1)
-        if self.beta == 0.0:
-            return mu, torch.zeros_like(var)
         return mu, F.softplus(var) # prevent var from being negative
 
     def decode(self, input):
         return self.decoder(input)
-    
-    def forward(self, input, latent_recon=False):
-        if latent_recon:
-            return self.forward_qzx(input) # should be equal to lrvae source
-            # return self.forward_Ex(input)
-        else:
-            return self.forward_vae(input)
 
-    def forward_vae(self, input):
-        mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
-        return self.decode(z), mu, log_var
+    def forward(self, input, latent_recon=True, latent_rand_sampling=True):
+        if self.variational == False:
+            return self.forward_ae(input)
+        if self.z_source == 'pz':
+            return self.forward_pz(input, latent_rand_sampling=latent_rand_sampling)
+        elif self.z_source == 'qzx':
+            return self.forward_qzx(input, latent_rand_sampling=latent_rand_sampling)
+        elif self.z_source == 'Ex':
+            return self.forward_Ex(input, latent_rand_sampling=latent_rand_sampling)
+        else:
+            print('Invalid z_source')
+            exit(1)
+
+    def forward_ae(self, input):
+        z, _ = self.encode(input)
+        return self.decode(z), 0.0, 0.0
     
-    def forward_Ex(self, input): # Latent reconstruction, z is encoded from x
+    def forward_Ex(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x
         mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, z, z_recon
     
-    def forward_qzx(self, input): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
+    def forward_qzx(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
         mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, mu, z_recon
+
+    def forward_pz(self, input, latent_rand_sampling=True): # Latent reconstruction, z is sampled from p(z)
+        mu, log_var = self.encode(input)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
+        z_input = torch.randn_like(mu) * torch.exp(torch.ones_like(log_var) * 0.5)
+        z_recon, _ = self.encode(self.decode(z_input))
+        return self.decode(z), mu, log_var, z_input, z_recon
+
+    
+
+
+class NaiveAE(MLPVAE):
+    def __init__(self, **kwargs):
+        kwargs['variational'] = False
+        super(NaiveAE, self).__init__(**kwargs)
 
     def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
         loss_recon = (
@@ -189,158 +301,32 @@ class VanillaVAE(VAE):
                 )
             ).mean()
         )
+
+        return loss_recon, loss_recon.detach(), 0.0, 0.0
+
+class VanillaVAE(MLPVAE):
+    def __init__(self, **kwargs):
+        super(VanillaVAE, self).__init__(**kwargs)
+
+    def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
+        loss_recon = (
+            ((input - output) ** 2).mean(dim=0).sum()
+            if not self.is_log_mse
+            else (0.5 * torch.ones_like(input[0]).sum()
+                * (( 2 * torch.pi * ((input - output) ** 2).mean(1).mean(1).mean(1)
+                        + 1e-5  # To avoid log(0)
+                    ).log() + 1)
+            ).mean()
+        )
         loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
 
         return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), 0.0
 
 
-class LRVAE(VAE):
-
-    def __init__(
-        self,
-        in_channel=1,
-        latent_channel=32,
-        hidden_channels=[32, 64, 128],
-        icnn_channels=[512, 1024],
-        input_dim=28,
-        beta=1.0,
-        alpha=0.01,
-        is_log_mse=False,
-        dataset=None,
-        z_source='qzx',
-        bal_alpha=True
-    ):
-        """
-        Latent Reconstruction VAE with residual-conv encoder and MLP decoder, for image dataset.
-        """
-        if dataset == "celeba":
-            in_channel = 3
-            latent_channel = 64
-            hidden_channels = [32, 64, 128, 256]
-            input_dim = 64
-        elif dataset == "mnist" or "fashionmnist":
-            in_channel = 1
-            latent_channel = 32
-            hidden_channels = [32, 64, 128]
-            input_dim = 28
-
-        super(VAE, self).__init__()
-
-        self.latent_channel = latent_channel
-        self.beta = beta
+class LRVAE(MLPVAE):
+    def __init__(self, alpha=0.01, **kwargs):
+        super(LRVAE, self).__init__(**kwargs)
         self.alpha = alpha
-        self.z_source = z_source
-        self.wu_alpha = 0.0
-        self.is_log_mse = is_log_mse
-        self.balanced_alpha = bal_alpha
-
-        fc_dim = input_dim
-        transpose_padding = []
-        for _ in range(len(hidden_channels)):
-            transpose_padding.append((fc_dim + 1) % 2)
-            fc_dim = (fc_dim - 1) // 2 + 1
-        transpose_padding.reverse()
-
-        # Make encoder
-        self.encoder = []
-        last_channel = in_channel
-
-        for channel in hidden_channels:
-            self.encoder.append(
-                torch.nn.Sequential(
-                    module.ResidualBlock(last_channel, channel, 2),
-                    module.ResidualBlock(channel, channel, 1),
-                )
-            )
-            last_channel = channel
-
-        self.encoder.append(
-            torch.nn.Sequential(
-                torch.nn.Flatten(),
-                torch.nn.Linear(last_channel * (fc_dim**2), latent_channel * 2),
-                torch.nn.BatchNorm1d(latent_channel * 2),
-                torch.nn.LeakyReLU(),
-                torch.nn.Linear(latent_channel * 2, latent_channel * 2),
-            )
-        )
-        self.encoder = torch.nn.Sequential(*self.encoder)
-
-        # Make decoder
-        self.decoder = []
-
-        # First layer: half of final dimension
-        last_channel = latent_channel
-        channel = (input_dim**2) * in_channel // 2
-        self.decoder.append(
-            torch.nn.Sequential(
-                torch.nn.Linear(last_channel, channel),
-                torch.nn.BatchNorm1d(channel),
-                torch.nn.LeakyReLU(),
-                torch.nn.Linear(channel, channel),
-                torch.nn.BatchNorm1d(channel),
-                torch.nn.LeakyReLU(),
-            )
-        )
-
-        # Second and last layer: full dimension
-        last_channel = channel
-        channel = (input_dim**2) * in_channel
-        self.decoder.append(
-            torch.nn.Sequential(
-                torch.nn.Linear(last_channel, channel),
-                torch.nn.BatchNorm1d(channel),
-                torch.nn.LeakyReLU(),
-                torch.nn.Linear(channel, channel),
-            )
-        )
-
-        # Unflatten to shape of image
-        self.decoder.append(torch.nn.Unflatten(1, (in_channel, input_dim, input_dim)))
-
-        # Note that there is no range mapping!
-        # Use Clip or Sigmoid if you want
-        self.decoder = torch.nn.Sequential(*self.decoder)
-
-    def encode(self, input):
-        ret = self.encoder(input)
-        #return ret.split(ret.shape[1] // 2, 1)
-        mu, var = ret.split(ret.shape[1] // 2, 1)
-        return mu, F.softplus(var) # prevent var from being negative
-
-    def decode(self, input):
-        return self.decoder(input)
-
-    def forward(self, input, latent_recon=True):
-        if self.z_source == 'pz':
-            return self.forward_pz(input)
-        elif self.z_source == 'qzx':
-            return self.forward_qzx(input)
-        elif self.z_source == 'Ex':
-            return self.forward_Ex(input)
-        else:
-            print('Invalid z_source')
-            exit(1)
-    
-    def forward_Ex(self, input): # Latent reconstruction, z is encoded from x
-        mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
-        recon = self.decode(z)
-        z_recon, _ = self.encode(recon)
-        return recon, mu, log_var, z, z_recon
-    
-    def forward_qzx(self, input): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
-        mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
-        recon = self.decode(z)
-        z_recon, _ = self.encode(recon)
-        return recon, mu, log_var, mu, z_recon
-
-    def forward_pz(self, input): # Latent reconstruction, z is sampled from p(z)
-        mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
-        z_input = torch.randn_like(mu) * torch.exp(torch.ones_like(log_var) * 0.5)
-        z_recon, _ = self.encode(self.decode(z_input))
-        return self.decode(z), mu, log_var, z_input, z_recon
 
     def warmup(self, epoch, max_epoch, wu_strat='linear', up_amount=None, start_epoch=0, repeat_interval=10):
         if wu_strat == 'linear':
@@ -380,6 +366,10 @@ class LRVAE(VAE):
         )
         loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
         loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+        if self.pwise_reg:
+            mu_zp = z_input.mean(dim=1, keepdim=True)
+            logvar_zp = torch.log(((z_input - mu_zp) ** 2).mean(dim=1))
+            loss_reg = loss_reg/2.0 + (-0.5 * (1 + logvar_zp - mu_zp**2 - logvar_zp.exp())).mean(dim=1).sum()/2.0
 
         if self.balanced_alpha:
             return loss_recon*(1-self.alpha*self.wu_alpha) + loss_reg*self.beta + loss_lr*self.alpha*self.wu_alpha, loss_recon.detach(), loss_reg.detach(), loss_lr.detach()
@@ -417,11 +407,23 @@ class LIDVAE(VAE):
             latent_channel = 64
             hidden_channels = [32, 64, 128, 256]
             input_dim = 64
-        elif dataset == "mnist" or "fashionmnist":
+        elif (dataset == "mnist") or (dataset == "fashionmnist"):
             in_channel = 1
             latent_channel = 32
             hidden_channels = [32, 64, 128]
             input_dim = 28
+        elif dataset == "cifar10":
+            in_channel = 3
+            latent_channel = 128
+            hidden_channels = [32, 64, 128, 256]
+            input_dim = 32
+        elif dataset == "omniglot":
+            in_channel = 1
+            latent_channel = 32
+            hidden_channels = [32, 64, 128]
+            input_dim = 28
+        else:
+            raise ValueError(f"Invalid dataset: {dataset}")
 
         super(VAE, self).__init__()
 
@@ -506,28 +508,37 @@ class LIDVAE(VAE):
         return self.decoder[2](y)
 
    
-    def forward(self, input, latent_recon=False):
+    def forward(self, input, latent_recon=False, latent_rand_sampling=True):
         if latent_recon:
-            return self.forward_qzx(input) # should be equal to lrvae source
+            return self.forward_qzx(input, latent_rand_sampling=latent_rand_sampling) # should be equal to lrvae source
             # return self.forward_Ex(input)
         else:
-            return self.forward_vae(input)
+            return self.forward_vae(input, latent_rand_sampling=latent_rand_sampling)
 
-    def forward_vae(self, input):
+    def forward_vae(self, input, latent_rand_sampling=True):
         mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
         return self.decode(z), mu, log_var
     
-    def forward_Ex(self, input): # Latent reconstruction, z is encoded from x
+    def forward_Ex(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x
         mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, z, z_recon
     
-    def forward_qzx(self, input): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
+    def forward_qzx(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
         mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
         recon = self.decode(z)
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, mu, z_recon
@@ -552,144 +563,3 @@ class LIDVAE(VAE):
 
         return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), 0.0
 
-
-class ConvVAE(VAE):
-
-    def __init__(
-        self,
-        in_channel=1,
-        latent_channel=32,
-        hidden_channels=[32, 64, 128],
-        input_dim=28,
-        beta=1.0,
-        is_log_mse=False,
-        dataset=None,
-    ):
-        """
-        Conventional VAE with residual-convolution encoder and decoder, for image dataset.
-        Note that decoder also consists of convolution and its transpose.
-        Beta and logMSE features are ready-to-use, but are disabled by default.
-        """
-        if dataset == "celeba":
-            in_channel = 3
-            latent_channel = 64
-            hidden_channels = [32, 64, 128, 256]
-            input_dim = 64
-        elif dataset == "mnist" or "fashionmnist":
-            in_channel = 1
-            latent_channel = 32
-            hidden_channels = [32, 64, 128]
-            input_dim = 28
-
-        super(VAE, self).__init__()
-
-        self.latent_channel = latent_channel
-        self.beta = beta
-        self.is_log_mse = is_log_mse
-
-        fc_dim = input_dim
-        transpose_padding = []
-        for _ in range(len(hidden_channels)):
-            transpose_padding.append((fc_dim + 1) % 2)
-            fc_dim = (fc_dim - 1) // 2 + 1
-        transpose_padding.reverse()
-
-        # Make encoder
-        self.encoder = []
-        last_channel = in_channel
-
-        for channel in hidden_channels:
-            self.encoder.append(
-                torch.nn.Sequential(
-                    module.ResidualBlock(last_channel, channel, 2),
-                    module.ResidualBlock(channel, channel, 1),
-                )
-            )
-            last_channel = channel
-
-        self.encoder.append(
-            torch.nn.Sequential(
-                torch.nn.Flatten(),
-                torch.nn.Linear(last_channel * (fc_dim**2), latent_channel * 2),
-                torch.nn.BatchNorm1d(latent_channel * 2),
-                torch.nn.LeakyReLU(),
-                torch.nn.Linear(latent_channel * 2, latent_channel * 2),
-            )
-        )
-        self.encoder = torch.nn.Sequential(*self.encoder)
-
-        # Make decoder
-        hidden_channels.reverse()
-
-        self.decoder = []
-        last_channel = hidden_channels[0]
-
-        self.decoder.append(
-            torch.nn.Sequential(
-                torch.nn.Linear(latent_channel, last_channel * (fc_dim**2)),
-                torch.nn.BatchNorm1d(last_channel * (fc_dim**2)),
-                torch.nn.LeakyReLU(),
-                torch.nn.Unflatten(1, (last_channel, fc_dim, fc_dim)),
-                module.ResidualBlock(last_channel, last_channel, 1),
-            )
-        )
-
-        for channel, pad in zip(hidden_channels[1:], transpose_padding[:-1]):
-            self.decoder.append(
-                torch.nn.Sequential(
-                    torch.nn.ConvTranspose2d(last_channel, channel, 3, 2, 1, pad),
-                    torch.nn.BatchNorm2d(channel),
-                    torch.nn.LeakyReLU(),
-                )
-            )
-            last_channel = channel
-
-        self.decoder.append(
-            torch.nn.Sequential(
-                torch.nn.ConvTranspose2d(
-                    last_channel, last_channel, 3, 2, 1, transpose_padding[-1]
-                ),
-                torch.nn.BatchNorm2d(last_channel),
-                torch.nn.LeakyReLU(),
-                torch.nn.ConvTranspose2d(last_channel, in_channel, 3, 1, 1),
-            )
-        )
-        # Note that there is no range mapping!
-        # Use Clip or Sigmoid if you want
-        self.decoder = torch.nn.Sequential(*self.decoder)
-
-        hidden_channels.reverse()
-
-    def encode(self, input):
-        ret = self.encoder(input)
-        #return ret.split(ret.shape[1] // 2, 1)
-        mu, var = ret.split(ret.shape[1] // 2, 1)
-        return mu, F.softplus(var) # prevent var from being negative
-
-    def decode(self, input):
-        return self.decoder(input)
-
-    def forward(self, input):
-        mu, log_var = self.encode(input)
-        z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
-        return self.decode(z), mu, log_var
-
-    def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
-        loss_recon = (
-            ((input - output) ** 2).mean(dim=0).sum()
-            if not self.is_log_mse
-            else (
-                0.5
-                * torch.ones_like(input[0]).sum()
-                * (
-                    (
-                        2 * torch.pi * ((input - output) ** 2).mean(1).mean(1).mean(1)
-                        + 1e-5  # To avoid log(0)
-                    ).log()
-                    + 1
-                )
-            ).mean()
-        )
-        loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
-
-        return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), 0.0
