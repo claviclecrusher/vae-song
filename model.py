@@ -38,14 +38,14 @@ class VAE(torch.nn.Module):
 
 
 
-class MLPVAE(VAE):
+class FlexibleVAE(VAE):
 
     def __init__(
         self,
         in_channel=1,
         latent_channel=32,
-        hidden_channels=[32, 64, 128],
-        icnn_channels=[512, 1024],
+        hidden_channels=None,
+        icnn_channels=None,
         input_dim=28,
         beta=1.0,
         alpha=0.0,
@@ -55,31 +55,38 @@ class MLPVAE(VAE):
         bal_alpha=True,
         pwise_reg=False,
         variational=True,
+        encoder_type='mlp',
         decoder_type='mlp',
+        fixed_var=False,
     ):
         """
         VAE with residual-conv encoder and MLP decoder, for image dataset.
         """
         if dataset == "celeba":
             in_channel = 3
-            latent_channel = 64
-            hidden_channels = [32, 64, 128, 256]
+            latent_channel = 128
+            hidden_channels = [32, 64, 128, 256] if hidden_channels == None else hidden_channels
             input_dim = 64
         elif (dataset == "mnist") or (dataset == "fashionmnist"):
             in_channel = 1
-            latent_channel = 32
-            hidden_channels = [32, 64, 128]
+            latent_channel = 28
+            hidden_channels = [32, 64, 128] if hidden_channels == None else hidden_channels
             input_dim = 28
         elif dataset == "cifar10":
             in_channel = 3
             latent_channel = 128
-            hidden_channels = [32, 64, 128, 256]
+            hidden_channels = [32, 64, 128, 256] if hidden_channels == None else hidden_channels
             input_dim = 32
         elif dataset == "omniglot":
             in_channel = 1
-            latent_channel = 128
-            hidden_channels = [32, 64, 128, 256]
+            latent_channel = 32
+            hidden_channels = [32, 64, 128, 256] if hidden_channels == None else hidden_channels
             input_dim = 28
+        elif dataset == "pinwheel":
+            in_channel = 2
+            latent_channel = 2
+            hidden_channels = [2, 2, 2, 2] if hidden_channels == None else hidden_channels
+            input_dim = 1
         else:
             raise ValueError(f"Invalid dataset: {dataset}")
 
@@ -94,7 +101,12 @@ class MLPVAE(VAE):
         self.is_log_mse = is_log_mse
         self.balanced_alpha = bal_alpha
         self.pwise_reg = pwise_reg
+        self.fixed_var = fixed_var
+        self.data_type = '2d' # for image dataset
 
+        if dataset in ['pinwheel']:
+            self.data_type = '1d'
+            
         fc_dim = input_dim
         transpose_padding = []
         for _ in range(len(hidden_channels)):
@@ -102,25 +114,81 @@ class MLPVAE(VAE):
             fc_dim = (fc_dim - 1) // 2 + 1
         transpose_padding.reverse()
 
+
         # Make encoder
-        self.encoder = self.make_encoder(hidden_channels, in_channel, latent_channel, fc_dim)
+        if self.data_type == '1d' and encoder_type == 'mlp':
+            self.encoder = self.make_encoder_mlp_1d(hidden_channels, in_channel, latent_channel)
+        elif encoder_type == 'mlp':
+            self.encoder = self.make_encoder_mlp_2d(hidden_channels, in_channel, latent_channel)
+        elif encoder_type == 'conv':
+            self.encoder = self.make_encoder_conv_2d(hidden_channels, in_channel, latent_channel, fc_dim)
+        else:
+            print(f'Invalid encoder type: {self.data_type} {encoder_type}')
+            exit()
 
         # Make decoder
-        if decoder_type == 'mlp':
-            self.decoder = self.make_decoder(in_channel, latent_channel, input_dim)
+        if self.data_type == '1d' and encoder_type == 'mlp':
+            self.decoder = self.make_decoder_mlp_1d(in_channel, latent_channel, list(reversed(hidden_channels)))
+        elif decoder_type == 'mlp':
+            self.decoder = self.make_decoder_mlp_2d(in_channel, latent_channel, input_dim)
         elif decoder_type == 'conv':
-            hidden_channels.reverse()
-            self.decoder = self.make_decoder_conv(in_channel, latent_channel, hidden_channels, fc_dim, transpose_padding)
-            hidden_channels.reverse()
+            self.decoder = self.make_decoder_conv_2d(in_channel, latent_channel, list(reversed(hidden_channels)), fc_dim, transpose_padding)
         else:
-            print(f'Invalid decoder type: {decoder_type}')
+            print(f'Invalid decoder type: {self.data_type} {decoder_type}')
             exit()
 
         return
 
-        
+    def make_encoder_mlp_1d(self, hidden_channels, in_channel, latent_channel):
+        last_channel = in_channel
+        encoder = []
+        for channel in hidden_channels:
+            encoder.append(
+                torch.nn.Sequential(
+                    torch.nn.Linear(last_channel, channel),
+                    torch.nn.BatchNorm1d(channel),
+                    torch.nn.LeakyReLU(),
+                )
+            )
+            last_channel = channel
 
-    def make_encoder(self, hidden_channels, in_channel, latent_channel, fc_dim):
+        encoder.append(
+            torch.nn.Sequential(
+                #torch.nn.Linear(last_channel, latent_channel * 2),
+                #torch.nn.BatchNorm1d(latent_channel * 2),
+                #torch.nn.LeakyReLU(),
+                torch.nn.Linear(last_channel, latent_channel * 2),
+            )
+        )
+        encoder = torch.nn.Sequential(*encoder)
+        return encoder
+    
+    def make_encoder_mlp_2d(self, hidden_channels, in_channel, latent_channel):
+        last_channel = in_channel
+        encoder = []
+        for channel in hidden_channels:
+            encoder.append(
+                torch.nn.Sequential(
+                    torch.nn.Flatten(),
+                    torch.nn.Linear(last_channel, channel),
+                    torch.nn.BatchNorm1d(channel),
+                    torch.nn.LeakyReLU(),
+                )
+            )
+            last_channel = channel
+
+        encoder.append(
+            torch.nn.Sequential(
+                torch.nn.Linear(last_channel, latent_channel * 2),
+                torch.nn.BatchNorm1d(latent_channel * 2),
+                torch.nn.LeakyReLU(),
+                torch.nn.Linear(latent_channel * 2, latent_channel * 2),
+            )
+        )
+        encoder = torch.nn.Sequential(*encoder)
+        return encoder
+
+    def make_encoder_conv_2d(self, hidden_channels, in_channel, latent_channel, fc_dim):
         last_channel = in_channel
         encoder = []
         for channel in hidden_channels:
@@ -144,7 +212,43 @@ class MLPVAE(VAE):
         encoder = torch.nn.Sequential(*encoder)
         return encoder
     
-    def make_decoder(self, in_channel, latent_channel, input_dim):
+    def make_decoder_mlp_1d(self, in_channel, latent_channel, hidden_channels=[]):
+        # First layer: half of final dimension
+        decoder = []
+        last_channel = latent_channel
+        channel = in_channel
+
+        for channel in hidden_channels:
+            decoder.append(
+                torch.nn.Sequential(
+                    torch.nn.Linear(last_channel, channel),
+                    torch.nn.BatchNorm1d(channel),
+                    torch.nn.LeakyReLU(),
+                )
+            )
+            last_channel = channel
+
+        # Second and last layer: full dimension
+        last_channel = channel
+        channel = in_channel
+        decoder.append(
+            torch.nn.Sequential(
+                torch.nn.Linear(last_channel, channel),
+                #torch.nn.BatchNorm1d(channel),
+                #torch.nn.LeakyReLU(),
+                #torch.nn.Linear(channel, channel),
+            )
+        )
+
+        # Unflatten to shape of 1d data
+        #decoder.append(torch.nn.Unflatten(1, (in_channel)))
+
+        # Note that there is no range mapping!
+        # Use Clip or Sigmoid if you want
+        decoder = torch.nn.Sequential(*decoder)
+        return decoder
+
+    def make_decoder_mlp_2d(self, in_channel, latent_channel, input_dim):
         # First layer: half of final dimension
         decoder = []
         last_channel = latent_channel
@@ -181,7 +285,7 @@ class MLPVAE(VAE):
         return decoder
     
 
-    def make_decoder_conv(self, in_channel, latent_channel, hidden_channels, fc_dim, transpose_padding):
+    def make_decoder_conv_2d(self, in_channel, latent_channel, hidden_channels, fc_dim, transpose_padding):
         decoder = []
         last_channel = hidden_channels[0]
 
@@ -245,10 +349,12 @@ class MLPVAE(VAE):
 
     def forward_ae(self, input):
         z, _ = self.encode(input)
-        return self.decode(z), 0.0, 0.0
+        return self.decode(z), z, 0.0, z, 0.0
     
     def forward_Ex(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x
         mu, log_var = self.encode(input)
+        if self.fixed_var != False:
+            log_var = torch.log(torch.ones_like(log_var) * self.fixed_var)
         if latent_rand_sampling:
             z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
         else:
@@ -259,6 +365,8 @@ class MLPVAE(VAE):
     
     def forward_qzx(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
         mu, log_var = self.encode(input)
+        if self.fixed_var != False:
+            log_var = torch.log(torch.ones_like(log_var) * self.fixed_var)
         if latent_rand_sampling:
             z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
         else:
@@ -269,6 +377,8 @@ class MLPVAE(VAE):
 
     def forward_pz(self, input, latent_rand_sampling=True): # Latent reconstruction, z is sampled from p(z)
         mu, log_var = self.encode(input)
+        if self.fixed_var != False:
+            log_var = torch.log(torch.ones_like(log_var) * self.fixed_var)
         if latent_rand_sampling:
             z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
         else:
@@ -280,7 +390,7 @@ class MLPVAE(VAE):
     
 
 
-class NaiveAE(MLPVAE):
+class NaiveAE(FlexibleVAE):
     def __init__(self, **kwargs):
         kwargs['variational'] = False
         super(NaiveAE, self).__init__(**kwargs)
@@ -304,7 +414,7 @@ class NaiveAE(MLPVAE):
 
         return loss_recon, loss_recon.detach(), 0.0, 0.0
 
-class VanillaVAE(MLPVAE):
+class VanillaVAE(FlexibleVAE):
     def __init__(self, **kwargs):
         super(VanillaVAE, self).__init__(**kwargs)
 
@@ -323,7 +433,7 @@ class VanillaVAE(MLPVAE):
         return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), 0.0
 
 
-class LRVAE(MLPVAE):
+class LRVAE(FlexibleVAE):
     def __init__(self, alpha=0.01, **kwargs):
         super(LRVAE, self).__init__(**kwargs)
         self.alpha = alpha
@@ -385,7 +495,7 @@ class LIDVAE(VAE):
         self,
         in_channel=1,
         latent_channel=32,
-        hidden_channels=[32, 64, 128],
+        hidden_channels=None,
         icnn_channels=[512, 1024],
         input_dim=28,
         inverse_lipschitz=0.0,
@@ -405,22 +515,22 @@ class LIDVAE(VAE):
         if dataset == "celeba":
             in_channel = 3
             latent_channel = 64
-            hidden_channels = [32, 64, 128, 256]
+            hidden_channels = [32, 64, 128, 256] if hidden_channels == None else hidden_channels
             input_dim = 64
         elif (dataset == "mnist") or (dataset == "fashionmnist"):
             in_channel = 1
             latent_channel = 32
-            hidden_channels = [32, 64, 128]
+            hidden_channels = [32, 64, 128] if hidden_channels == None else hidden_channels
             input_dim = 28
         elif dataset == "cifar10":
             in_channel = 3
             latent_channel = 128
-            hidden_channels = [32, 64, 128, 256]
+            hidden_channels = [32, 64, 128, 256] if hidden_channels == None else hidden_channels
             input_dim = 32
         elif dataset == "omniglot":
             in_channel = 1
             latent_channel = 32
-            hidden_channels = [32, 64, 128]
+            hidden_channels = [32, 64, 128] if hidden_channels == None else hidden_channels
             input_dim = 28
         else:
             raise ValueError(f"Invalid dataset: {dataset}")

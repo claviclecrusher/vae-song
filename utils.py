@@ -113,11 +113,12 @@ def kld(mu, log_var):
     return (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum().detach().item()
 
 
-def measure_pc(model, loader, device):
+def measure_pc_runmodel(model, loader, device):
     au_sum = 0
     kl_sum = 0
     mi_sum = 0
     nll_sum = 0
+    var_sum = 0
     for i, data in enumerate(loader):
         res_list = model(data[0].to(device)) 
         recon  = res_list[0]
@@ -126,14 +127,16 @@ def measure_pc(model, loader, device):
         z_input = res_list[3] if len(res_list)>3 else None
         z_recon = res_list[4] if len(res_list)>4 else None
         loss, loss_rec, loss_reg, loss_lr = model.loss(data[0].to(device), recon, mu, log_var, z_input=z_input, z_recon=z_recon)
-        if not torch.is_tensor(log_var): # for naive ae
-            return 0, 0, 0, 0
         au_sum += calc_au_per_batch(mu) # unstable result
         kl_sum += kld(mu, log_var)
         mi_sum += calc_mi(mu, log_var)
         nll_sum += nll_iw(mu, log_var, loss_rec)
+        if torch.is_tensor(log_var): # except naive ae
+            var_sum += log_var.exp().sum().detach().item()
     #au, au_var = calc_au(model, loader, device, delta=0.01)
-    return au_sum/(i+1), kl_sum/(i+1), mi_sum/(i+1), nll_sum/(i+1)
+    return au_sum/(i+1), kl_sum/(i+1), mi_sum/(i+1), nll_sum/(i+1), var_sum/(i+1)
+
+
 
 def log_unified(path, list_elements, list_names, logfilename='unified_log.csv'):
     os.makedirs(path, exist_ok=True)
@@ -145,6 +148,16 @@ def log_unified(path, list_elements, list_names, logfilename='unified_log.csv'):
         writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         writer.writerow(list_elements)
 
+def log_unified_dict(path, dict_elements, logfilename='unified_log.csv'):
+    os.makedirs(path, exist_ok=True)
+    if not os.path.isfile(os.path.join(path, logfilename)):
+        with open(os.path.join(path, logfilename), mode='a') as file:
+            writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(dict_elements.keys())
+    with open(os.path.join(path, logfilename), mode='a') as file:
+        writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(dict_elements.values())
+
 
 def logscale_plt_color_map(original_cmap_name):
     """Create a new colormap with log scale"""
@@ -153,7 +166,83 @@ def logscale_plt_color_map(original_cmap_name):
     return matplotlib.colors.ListedColormap(newcolors)
 
 
-def pca_visualization(model, loader_test, device, epoch, name, resultname, prior=False):
+def pca_calculation(x):
+    # Compute covariance matrix
+    x_mean = np.mean(x, axis=0)
+    x_centered = x - x_mean
+    cov_matrix = np.dot(x_centered.T, x_centered) / (x_centered.shape[0] - 1)
+
+    # Eigen decomposition
+    eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
+
+    # Sort eigenvalues and eigenvectors
+    sorted_indices = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[sorted_indices]
+    eigenvectors = eigenvectors[:, sorted_indices]
+
+    x_pca = np.dot(x_centered, eigenvectors)
+    x_pca_min, x_pca_max = x_pca.min(), x_pca.max()
+    x_min, x_max = x.min(), x.max()
+    #print(f" var min: {v_min}, var max: {v_max}, var mean: {var.mean()}")
+    return x_pca, x_pca_min, x_pca_max, x_min, x_max
+
+
+def pca_plot(x, x_pca, x_pca_min, x_pca_max, x_min, x_max, v_min, v_max, y, epoch, resultname, name, variablename='?', var=0.0, cmapc='viridis'):
+    # Plot 1D scatter for each principal component
+    MAX_1D_PLOT_ITER = 32
+    zero_array = np.zeros_like(x_pca[:, 0])
+    num_components = min(x_pca.shape[1], MAX_1D_PLOT_ITER)
+    fig, axes = plt.subplots(num_components, 1, figsize=(15, 10), sharex=True)
+    plt.yticks([])
+    for i in range(num_components):
+        axes[i].scatter(x_pca[:, i], zero_array, c=var[:,i], cmap=cmapc, vmin=0, vmax=1.0, marker='|')
+        axes[i].get_yaxis().set_visible(False)  # Hide the y-axis
+        axes[i].set_xlim([x_pca_min, x_pca_max])
+    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_pca_all_{variablename}.png")
+    plt.close()
+
+    # Plot 1D scatter for each actual channel
+    MAX_1D_PLOT_ITER = 32
+    zero_array = np.zeros_like(x[:, 0])
+    num_components = min(x.shape[1], MAX_1D_PLOT_ITER)
+    fig, axes = plt.subplots(num_components, 1, figsize=(15, 10), sharex=True)
+    plt.yticks([])
+    for i in range(num_components):
+        #axes[i].scatter(mu[:, i], zero_array, c=var[:,i], cmap=logscale_plt_color_map('viridis'), vmin=0, vmax=1.0)
+        axes[i].scatter(x[:, i], zero_array, c=var[:,i], cmap=cmapc, vmin=v_min, vmax=v_max, marker='|')
+        axes[i].get_yaxis().set_visible(False)  # Hide the y-axis
+        axes[i].set_xlim([x_min, x_max])
+    #plt.colorbar(axes, label='Average Variance')
+    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_channels_all_{variablename}.png")
+    plt.close()
+
+    # Plot 2D scatter for the first two principal components
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(x_pca[:, 0], x_pca[:, 1], c=var.max(1), cmap=cmapc, vmin=v_min, vmax=v_max)
+    plt.colorbar(scatter, label='Maximum Variance')
+    #plt.xlim([-4, 4])
+    #plt.ylim([-4, 4])
+    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_pca_v_{variablename}.png")
+    plt.close()
+
+    try:
+        tsne = TSNE(n_components=2, random_state=0)
+        mu_tsne = tsne.fit_transform(x)
+        plt.figure(figsize=(10, 8))
+        scatter = plt.scatter(mu_tsne[:, 0], mu_tsne[:, 1], c=y, cmap='tab10')
+        plt.colorbar(scatter, label='Class')
+        plt.xlim([-50, 50])
+        plt.ylim([-50, 50])
+        plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_tsne_c.png")
+        plt.close()
+    except Exception as e:
+        print(f"Error in tsne: {e}")
+        exit()
+
+    return
+
+
+def pca_visualization(model, loader_test, device, epoch, name, resultname):
 
     os.makedirs("./results/"+resultname+"/" + name + "/pca", exist_ok=True)
     model.eval()
@@ -169,97 +258,35 @@ def pca_visualization(model, loader_test, device, epoch, name, resultname, prior
     x = x.to(device)
     #result = model(x)
     mu, var = model.encode(x)
+    z = reparameterize(mu, var).squeeze()
 
     mu = mu.cpu().detach().numpy()
+    z = z.cpu().detach().numpy()
     if torch.is_tensor(var):
         var = var.cpu().detach().numpy()
     else:
         var = np.zeros_like(mu)
 
-    if prior == True:
-        mu = np.random.randn(*mu.shape)
-        var = np.zeros_like(mu)
-
-    # Compute covariance matrix
-    mu_mean = np.mean(mu, axis=0)
-    mu_centered = mu - mu_mean
-    cov_matrix = np.dot(mu_centered.T, mu_centered) / (mu_centered.shape[0] - 1)
-
-    # Eigen decomposition
-    eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
-
-    # Sort eigenvalues and eigenvectors
-    sorted_indices = np.argsort(eigenvalues)[::-1]
-    eigenvalues = eigenvalues[sorted_indices]
-    eigenvectors = eigenvectors[:, sorted_indices]
-
-    mu_pca = np.dot(mu_centered, eigenvectors)
-    mu_pca_min, mu_pca_max = mu_pca.min(), mu_pca.max()
-    mu_min, mu_max = mu.min(), mu.max()
     v_min, v_max = var.min(), var.max()
-    #print(f" var min: {v_min}, var max: {v_max}, var mean: {var.mean()}")
+
+    mu_pca, mu_pca_min, mu_pca_max, mu_min, mu_max = pca_calculation(mu)
+    z_pca, z_pca_min, z_pca_max, z_min, z_max = pca_calculation(z)
+
 
     # Plot 2D scatter for prior distribution
-    if prior == True:
+    if epoch == 0:
+        zpz = np.random.randn(*mu.shape)
+        zpz_pca, _, _, _, _ = pca_calculation(zpz)
         plt.figure(figsize=(10, 8))
-        scatter = plt.scatter(mu_pca[:, 0], mu_pca[:, 1], c=var.mean(1), cmap='coolwarm', vmin=0, vmax=1.0)
+        scatter = plt.scatter(zpz_pca[:, 0], zpz_pca[:, 1], c=var.mean(1), cmap='coolwarm', vmin=0, vmax=1.0)
         #plt.colorbar(scatter, label='Average Variance')
         #plt.xlim([-4, 4])
         #plt.ylim([-4, 4])
-        plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_prior.png")
+        plt.savefig(f"./results/{resultname}/{name}/pca/prior.png")
         plt.close()
-        return
 
-    # Plot 1D scatter for each principal component
-    MAX_1D_PLOT_ITER = 32
-    zero_array = np.zeros_like(mu_pca[:, 0])
-    num_components = min(mu_pca.shape[1], MAX_1D_PLOT_ITER)
-    fig, axes = plt.subplots(num_components, 1, figsize=(15, 10), sharex=True)
-    plt.yticks([])
-    for i in range(num_components):
-        axes[i].scatter(mu_pca[:, i], zero_array, c=var[:,i], cmap='viridis', vmin=0, vmax=1.0)
-        axes[i].get_yaxis().set_visible(False)  # Hide the y-axis
-        axes[i].set_xlim([mu_pca_min, mu_pca_max])
-    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_pca_all.png")
-    plt.close()
-
-    # Plot 1D scatter for each actual channel
-    MAX_1D_PLOT_ITER = 32
-    zero_array = np.zeros_like(mu[:, 0])
-    num_components = min(mu.shape[1], MAX_1D_PLOT_ITER)
-    fig, axes = plt.subplots(num_components, 1, figsize=(15, 10), sharex=True)
-    plt.yticks([])
-    for i in range(num_components):
-        #axes[i].scatter(mu[:, i], zero_array, c=var[:,i], cmap=logscale_plt_color_map('viridis'), vmin=0, vmax=1.0)
-        axes[i].scatter(mu[:, i], zero_array, c=var[:,i], cmap='viridis', vmin=v_min, vmax=v_max)
-        axes[i].get_yaxis().set_visible(False)  # Hide the y-axis
-        axes[i].set_xlim([mu_min, mu_max])
-    #plt.colorbar(axes, label='Average Variance')
-    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_channels_all.png")
-    plt.close()
-
-    # Plot 2D scatter for the first two principal components
-    plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(mu_pca[:, 0], mu_pca[:, 1], c=var.mean(1), cmap='viridis', vmin=v_min, vmax=v_max)
-    plt.colorbar(scatter, label='Average Variance')
-    #plt.xlim([-4, 4])
-    #plt.ylim([-4, 4])
-    plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_pca_v.png")
-    plt.close()
-
-    try:
-        tsne = TSNE(n_components=2, random_state=0)
-        mu_tsne = tsne.fit_transform(mu)
-        plt.figure(figsize=(10, 8))
-        scatter = plt.scatter(mu_tsne[:, 0], mu_tsne[:, 1], c=y, cmap='tab10')
-        plt.colorbar(scatter, label='Class')
-        plt.xlim([-50, 50])
-        plt.ylim([-50, 50])
-        plt.savefig(f"./results/{resultname}/{name}/pca/{epoch}_tsne_c.png")
-        plt.close()
-    except Exception as e:
-        print(f"Error in tsne: {e}")
-        exit()
+    pca_plot(mu, mu_pca, mu_pca_min, mu_pca_max, mu_min, mu_max, v_min, v_max, y, epoch, resultname, name, variablename='mu', var=var)
+    pca_plot(z, z_pca, z_pca_min, z_pca_max, z_min, z_max, v_min, v_max, y, epoch, resultname, name, variablename='z', var=np.zeros_like(mu), cmapc='coolwarm')
 
     return
 
@@ -369,3 +396,23 @@ def rec_lr_scatter_visualization(models, dataset_name, device):
     plt.close()
 
     print(count_points, "points plotted")
+
+
+def visualize_2c_points_on_image(tensor, label, resultname, name, epoch, tensor_name='recon'):
+    # 텐서를 numpy 배열로 변환
+    if torch.is_tensor(tensor):
+        tensor = tensor.cpu().detach().numpy()
+        label = label.cpu().detach().numpy()
+    
+    # 텐서의 크기를 확인
+    assert tensor.shape[1] == 2, f"Tensor must have shape [N, 2] but given shape is {tensor.shape}"
+    
+    # 점을 시각화
+    plt.figure(figsize=(8, 8))
+    plt.scatter(tensor[:, 0], tensor[:, 1], c=label, cmap='tab10', marker='o')
+    plt.title(f'{tensor_name} 2D scatter plot')
+    plt.xlabel('X-axis')
+    plt.ylabel('Y-axis')
+    plt.grid(True)
+    os.makedirs(f"./results/{resultname}/{name}/scatter2d/", exist_ok=True)
+    plt.savefig(f"./results/{resultname}/{name}/scatter2d/{epoch}_{tensor_name}.png")

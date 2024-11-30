@@ -165,6 +165,7 @@ runs
 nohup.out
 
 results/
+results_*/
 runs/
 dataset/
 log/

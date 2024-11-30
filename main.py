@@ -9,8 +9,9 @@ import os
 import model as Model
 from utils import pca_visualization
 import utils
+import dataset
 
-def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, visualize=True):
+def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, visualize=True, data_type='2d'):
     model.eval() #
     loss_total = 0.0
     loss_recon_total = 0.0
@@ -28,6 +29,11 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         loss_recon_total += float(loss_recon)
         loss_reg_total += float(loss_reg)
         loss_lr_total += float(loss_lr)
+
+    if save_img and (data_type == '1d'):
+        utils.visualize_2c_points_on_image(x, y, resultname, name, epoch, "input")
+        utils.visualize_2c_points_on_image(result[3], y, resultname, name, epoch, "latent") # only work on latent channel==2
+        utils.visualize_2c_points_on_image(result[0], y, resultname, name, epoch, "recon")
 
     if save_img: # == True) and (((epoch & (epoch - 1)) == 0) or (epoch % 100 == 99)):
         os.makedirs("./results/"+resultname+"/" + name + "/valontr", exist_ok=True)
@@ -74,66 +80,14 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
     # PCA visualization
     if visualize: # and ((epoch & (epoch - 1)) == 0 or epoch % 100 == 99):
         pca_visualization(model, loader_test, device, epoch, name, resultname)
-        if epoch == 0:
-            pca_visualization(model, loader_test, device, epoch, name, resultname, prior=True)
         
     return loss_total / len(loader_test), loss_recon_total / len(loader_test), loss_reg_total / len(loader_test), loss_lr_total / len(loader_test)
 
 
 
 def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None):
-    if dataset_name == 'mnist':
-        transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.RandomRotation(20),
-                torchvision.transforms.RandomResizedCrop((28, 28), (0.9, 1), (0.9, 1.1)),
-                torchvision.transforms.ToTensor(),
-            ]
-        )
-        train_dataset = torchvision.datasets.MNIST(root="dataset/", transform=transforms, download=True)
-        test_dataset = torchvision.datasets.MNIST(root="dataset/", transform=transforms, train=False)
-    elif dataset_name == 'celeba':
-        transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.RandomHorizontalFlip(),
-                torchvision.transforms.CenterCrop(148),
-                torchvision.transforms.Resize(64),
-                torchvision.transforms.ToTensor(),
-            ]
-        )
-        train_dataset = torchvision.datasets.CelebA(root="dataset/", transform=transforms, download=True)
-        test_dataset = torchvision.datasets.CelebA(root="dataset/", transform=transforms, split="test")
-    elif dataset_name == 'fashionmnist':
-        transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(28),
-                torchvision.transforms.ToTensor(),
-            ]
-        )
-        train_dataset = torchvision.datasets.FashionMNIST(root="dataset/", transform=transforms, download=True)
-        test_dataset = torchvision.datasets.FashionMNIST(root="dataset/", transform=transforms, train=False)
-    elif dataset_name == 'cifar10':
-        transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.RandomHorizontalFlip(),
-                torchvision.transforms.Resize(32),
-                torchvision.transforms.ToTensor(),
-            ]
-        )
-        train_dataset = torchvision.datasets.CIFAR10(root="dataset/", transform=transforms, download=True)
-        test_dataset = torchvision.datasets.CIFAR10(root="dataset/", transform=transforms, train=False)
-    elif dataset_name == 'omniglot':
-        transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(28),
-                torchvision.transforms.ToTensor(),
-            ]
-        )
-        train_dataset = torchvision.datasets.Omniglot(root="dataset/", transform=transforms, download=True)
-        test_dataset = torchvision.datasets.Omniglot(root="dataset/", transform=transforms, background=False, download=True)
-    else:
-        print(dataset_name, "is not implemented")
-        exit()
+    
+    train_dataset, test_dataset = dataset.load_dataset(dataset_name)
     
     loader_train = DataLoader(
         train_dataset,
@@ -146,11 +100,12 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     loader_test = DataLoader(
         test_dataset,
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=8,
         drop_last=True,
         pin_memory=True,
     )
+
 
 
     #if torch.cuda.device_count() > 1:
@@ -207,16 +162,19 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
             loss_recon_total += float(loss_recon)
             loss_reg_total += float(loss_reg)
             loss_lr_total += float(loss_lr)
-
-        writer.add_scalar("loss/train", loss_total / len(loader_train), epoch)
+        
+        writer.add_scalar("loss/train", loss_total / len(loader_train), epoch) # divide by 0 인 경우 batch size 살펴보기
         writer.add_scalar("recon/train", loss_recon_total / len(loader_train), epoch)
         writer.add_scalar("reg/train", loss_reg_total / len(loader_train), epoch)
         
-        visualize, save_img = (True, True) if ((epoch == (epochs-1)) or ((epoch & (epoch - 1)) == 0)) else (False, False)
-        loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, save_img=save_img, visualize=visualize)
+        if dataset_name == 'pinwheel':
+            data_type = '1d'
+        #visualize, save_img = (True, True) if ((epoch == (epochs-1)) or ((epoch & (epoch - 1)) == 0)) else (False, False)
+        visualize, save_img = (True, True) if (epoch == (epochs-1)) else (False, False)
+        loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, save_img=save_img, visualize=visualize, data_type=data_type)
 
         writer.add_scalar("loss/test", loss_total / len(loader_test), epoch)
-        if (epoch % 100 == 99) or ((epoch & (epoch - 1)) == 0):
+        if epoch == (epochs-1):
             torch.save(
                 model.state_dict(), "./results/" + resultname + "/" + name + "/params/model_" + str(epoch) + ".pt"
             )
@@ -275,72 +233,94 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         drop_last=True,
         pin_memory=True,
     )
-    au, kl, mi, nll = utils.measure_pc(model, loader_eval, device)
+    au, kl, mi, nll, mvar = utils.measure_pc_runmodel(model, loader_eval, device)
     print('| au:', au, '| kl:', kl, '| mi:', mi, '| nll:', nll)
 
-    utils.log_unified("./log/", [name, dataset_name, epoch+1, fid, au, kl, mi, nll, loss_total/len(loader_test), \
-                                loss_recon_total/len(loader_test), loss_reg_total/len(loader_test), loss_lr_total/len(loader_test)],
-                                ['name', 'dataset_name', 'epoch', 'fid', 'au', 'kl', 'mi', 'nll', 'vloss', 'vlrec', 'vlreg', 'vllr'],
-                                logfilename=logfilename)
+    #utils.log_unified("./log/", [name, dataset_name, epoch+1, fid, au, kl, mi, nll, loss_total/len(loader_test), \
+    #                            loss_recon_total/len(loader_test), loss_reg_total/len(loader_test), loss_lr_total/len(loader_test)],
+    #                            ['name', 'dataset_name', 'epoch', 'fid', 'au', 'kl', 'mi', 'nll', 'vloss', 'vlrec', 'vlreg', 'vllr'],
+    #                            logfilename=logfilename)
+    utils.log_unified_dict("./log/", {'name':name, 'dataset_name':dataset_name, 'epoch':epoch+1, 'fid':fid, 'au':au, 'kl':kl, 'mi':mi, 'nll':nll, 'vloss':loss_total/len(loader_test), \
+                                    'vlrec':loss_recon_total/len(loader_test), 'vlreg':loss_reg_total/len(loader_test), 'vllr':loss_lr_total/len(loader_test), \
+                                    'mean_var':mvar},
+                                    logfilename=logfilename)
 
 
-def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.4], log_mse=False,
+def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.4], log_mse=False,
                il_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0], logfilename='log_lidvae.csv', resultname='res_lidvae', pt_param=None):
     for b in beta_list:
         for il in il_list:
             for i in range(niter):
-                train_and_test(Model.LIDVAE(is_log_mse=log_mse, inverse_lipschitz=il, beta=b, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
+                train_and_test(Model.LIDVAE(is_log_mse=log_mse, inverse_lipschitz=il, beta=b, dataset=exp_data, hidden_channels=hchans), epochs=exp_epochs, batch_size=batch_size,
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
 
-def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae', pt_param=None, decoder_type='mlp'):
+def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae', pt_param=None, encoder_type='conv', decoder_type='mlp', fixed_var=False):
     for b in beta_list:
         for i in range(niter):
-            train_and_test(Model.VanillaVAE(beta=b, dataset=exp_data, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
+            train_and_test(Model.VanillaVAE(beta=b, dataset=exp_data, hidden_channels=hchans, encoder_type=encoder_type, decoder_type=decoder_type, fixed_var=fixed_var), epochs=exp_epochs, batch_size=batch_size,
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_nae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, logfilename='log_naive_ae.csv', resultname='res_naive_ae', pt_param=None, decoder_type='mlp'):
+def exp_nae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, logfilename='log_naive_ae.csv', resultname='res_naive_ae', pt_param=None, encoder_type='conv', decoder_type='mlp'):
     for i in range(niter):
-        train_and_test(Model.NaiveAE(dataset=exp_data, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
+        train_and_test(Model.NaiveAE(dataset=exp_data, hidden_channels=hchans, encoder_type=encoder_type, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], z_source='Ex', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None, pwise_reg=False, decoder_type='mlp'):
+def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], z_source='Ex', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None, pwise_reg=False, encoder_type='conv', decoder_type='mlp'):
     for a in alpha_list:
         for b in beta_list:
             for i in range(niter):
-                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, dataset=exp_data, pwise_reg=pwise_reg, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
+                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, dataset=exp_data, hidden_channels=hchans, pwise_reg=pwise_reg, encoder_type=encoder_type, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_vae_conv(niter=1, exp_epochs=100, batch_size=128, exp_data=None, beta_list=[0.5, 1.0, 2.0, 4.0, 8.0, 16.0], 
-                 logfilename='log_conv.csv', resultname='res_conv', pt_param=None):
-    for b in beta_list:
-        for i in range(niter):
-            train_and_test(Model.ConvVAE(is_log_mse=False, beta=b, dataset=exp_data), epochs=exp_epochs, batch_size=batch_size,
-                           dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
-    return
 
 
 
 if __name__ == "__main__":
-    exp_epochs = 100 # 0 for only testing
+    exp_epochs = 1000 # 0 for only testing
     exp_data = 'mnist'
+    encoder_type = 'conv'
     decoder_type = 'conv'
-    pwr = True
+    fixed_var = False
+    bsize = 128
 
     # Train
-    #exp_vae(1, exp_epochs=1, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
-    #exp_nae(1, exp_epochs=exp_epochs, batch_size=64, exp_data=exp_data, logfilename=f"log_naive_ae_{decoder_type}_{exp_data}.csv", resultname=f"result_naive_ae_{decoder_type}_{exp_data}")
-    #exp_vae(1, exp_epochs=exp_epochs, batch_size=64, exp_data=exp_data, beta_list=[0.1, 1.0], logfilename=f"log_vae_{decoder_type}_{exp_data}.csv", resultname=f"result_vae_{decoder_type}_{exp_data}")
-    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.1, 1.0], alpha_list=[0.01, 0.1, 0.3, 1.0], pwise_reg=pwr, logfilename=f'log_lrvae_Ex_{decoder_type}_{exp_data}_pwr{pwr}.csv', resultname=f'result_lrvae_Ex_{decoder_type}_{exp_data}_pwr{pwr}')
-    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[0.0, 0.2, 1.0], alpha_list=[0.0, 0.2], logfilename=f"log_lrvae_Ex_pwr_{exp_data}.csv", resultname=f"result_lrvae_Ex_pwr_{exp_data}", pwise_reg=True)
-    #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='log_lidvae_lm_mnist.csv', resultname='result_lidvae_lm_mnist', log_mse=True)
+    #exp_vae(1, exp_epochs=1, batch_size=bsize, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST')
+    #exp_nae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, logfilename=f"log_naive_ae_{decoder_type}_{exp_data}.csv", resultname=f"result_naive_ae_{decoder_type}_{exp_data}")
+    #exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[0.000001, 1.0], logfilename=f"log_vae_{decoder_type}_{exp_data}.csv", resultname=f"result_vae_{decoder_type}_{exp_data}")
+    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[0.000001, 1.0], alpha_list=[0.01, 0.1, 0.2, 0.4, 1.0], pwise_reg=True, logfilename=f'log_lrvae_Ex_{decoder_type}_{exp_data}_pwr.csv', resultname=f'result_lrvae_Ex_{decoder_type}_{exp_data}_pwr')
+    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[1.0], alpha_list=[0.01, 0.1, 0.2, 0.4, 1.0], pwise_reg=False, logfilename=f'log_lrvae_Ex_{decoder_type}_{exp_data}.csv', resultname=f'result_lrvae_Ex_{decoder_type}_{exp_data}')
+    #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[0.0, 0.2, 1.0], alpha_list=[0.0, 0.2], logfilename=f"log_lrvae_Ex_pwr_{exp_data}.csv", resultname=f"result_lrvae_Ex_pwr_{exp_data}", pwise_reg=True)
+    #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[10.0], il_list=[0.0, 0.1, 0.2], logfilename=f'log_lidvae_lm_{exp_data}.csv', resultname=f'result_lidvae_lm_{exp_data}', log_mse=True)
+
+    # Train depth & width test
+    exp_data = 'pinwheel'
+    encoder_type = 'mlp'
+    decoder_type = 'mlp'
+    bsize = 1000
+    h_chan_list = []
+    exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_list, beta_list=[0.1, 1.0], \
+            encoder_type=encoder_type, decoder_type=decoder_type, \
+            logfilename=f"log_vae_E{encoder_type}_D{decoder_type}_{exp_data}.csv", resultname=f"result_vae_E{encoder_type}_D{decoder_type}_{exp_data}")
+    #exp_nae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_list, \
+    #        encoder_type=encoder_type, decoder_type=decoder_type, \
+    #        logfilename=f"log_nae_E{encoder_type}_D{decoder_type}_{exp_data}.csv", resultname=f"result_nae_E{encoder_type}_D{decoder_type}_{exp_data}")
+
+    #h_chan_list = [2, 2, 2, 2, 2]
+    #for i in range(len(h_chan_list)):
+    #    h_chan_sublist = h_chan_list[:i]
+    #    exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[1.0], \
+    #        encoder_type=encoder_type, decoder_type=decoder_type, \
+    #        logfilename=f"log_vae_E{encoder_type}_D{decoder_type}_{exp_data}.csv", resultname=f"result_vae_E{encoder_type}_D{decoder_type}_{exp_data}")
+
+    #exp_vae(1, exp_epochs=4, batch_size=64, exp_data=exp_data, beta_list=[1.0], logfilename=f"TEST.csv", resultname=f"TEST")
 
     # Test    
-    #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1000.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11190951_b=1000.0/params/model_64.pt')
+    #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1000.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_conv_mnist/VanillaVAE 11261540_b=0.1/params/model_99.pt')
     #exp_vae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[1.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_vae_mnist/VanillaVAE 11181447_b=1.0/params/model_64.pt')
     #exp_lrvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[0.1], alpha_list=[0.1], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lrvae_mnist/LRVAE 11081131_b=3.0_a=0.1/model_99.pt')
     #exp_lidvae(1, exp_epochs=0, batch_size=128, exp_data=exp_data, beta_list=[10.0], il_list=[0.0], logfilename='TEST.csv', resultname='TEST', pt_param='./results/result_lidvae_lm_mnist/LIDVAE 11151324_b=10.0_logmse_il=0.0/model_99.pt')
