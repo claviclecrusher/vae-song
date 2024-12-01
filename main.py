@@ -30,10 +30,14 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         loss_reg_total += float(loss_reg)
         loss_lr_total += float(loss_lr)
 
-    if save_img and (data_type == '1d'):
+    if visualize and (data_type == '1d'):
         utils.visualize_2c_points_on_image(x, y, resultname, name, epoch, "input")
-        utils.visualize_2c_points_on_image(result[3], y, resultname, name, epoch, "latent") # only work on latent channel==2
+        utils.visualize_2c_points_on_image(result[1], y, resultname, name, epoch, "mu") # only work on latent channel==2
+        utils.visualize_2c_points_on_image(result[3], y, resultname, name, epoch, "z") # only work on latent channel==2
         utils.visualize_2c_points_on_image(result[0], y, resultname, name, epoch, "recon")
+
+    if visualize:
+        utils.visualize_flows(x, result[1], result[3], result[0], resultname, name, epoch)
 
     if save_img: # == True) and (((epoch & (epoch - 1)) == 0) or (epoch % 100 == 99)):
         os.makedirs("./results/"+resultname+"/" + name + "/valontr", exist_ok=True)
@@ -88,6 +92,8 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
 def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None):
     
     train_dataset, test_dataset = dataset.load_dataset(dataset_name)
+
+    test_shuffle = True if dataset_name == 'pinwheel' else False
     
     loader_train = DataLoader(
         train_dataset,
@@ -100,7 +106,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     loader_test = DataLoader(
         test_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=test_shuffle,
         num_workers=8,
         drop_last=True,
         pin_memory=True,
@@ -281,7 +287,7 @@ def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=Non
 
 
 if __name__ == "__main__":
-    exp_epochs = 1000 # 0 for only testing
+    exp_epochs = 100 # 0 for only testing
     exp_data = 'mnist'
     encoder_type = 'conv'
     decoder_type = 'conv'
@@ -302,20 +308,38 @@ if __name__ == "__main__":
     encoder_type = 'mlp'
     decoder_type = 'mlp'
     bsize = 1000
-    h_chan_list = []
-    exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_list, beta_list=[0.1, 1.0], \
-            encoder_type=encoder_type, decoder_type=decoder_type, \
-            logfilename=f"log_vae_E{encoder_type}_D{decoder_type}_{exp_data}.csv", resultname=f"result_vae_E{encoder_type}_D{decoder_type}_{exp_data}")
+    exp_epochs = 1000
+    #h_chan_list = []
+    #exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_list, beta_list=[0.000001, 0.0001, 0.01, 1.0], \
+    #        encoder_type=encoder_type, decoder_type=decoder_type, \
+    #        logfilename=f"log_{exp_data}_vae_linear.csv", resultname=f"result_{exp_data}_vae_linear")
     #exp_nae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_list, \
     #        encoder_type=encoder_type, decoder_type=decoder_type, \
-    #        logfilename=f"log_nae_E{encoder_type}_D{decoder_type}_{exp_data}.csv", resultname=f"result_nae_E{encoder_type}_D{decoder_type}_{exp_data}")
+    #        logfilename=f"log_{exp_data}_nae_linear.csv", resultname=f"result_{exp_data}_nae_linear")
 
-    #h_chan_list = [2, 2, 2, 2, 2]
+    h_chan_sublist = [32, 32, 32, 32]
+    #exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[0.02, 0.03, 0.04, 0.05, 0.06, 0.06, 0.07, 0.08, 0.09], \
+    #        encoder_type=encoder_type, decoder_type=decoder_type, \
+    #        logfilename=f"log_{exp_data}_vae_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_vae_depth{len(h_chan_sublist)}")
+    exp_lrvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, \
+            beta_list=[0.01], alpha_list=[0.1, 0.4, 1.0]\
+            encoder_type=encoder_type, decoder_type=decoder_type, \
+            logfilename=f"log_{exp_data}_vae_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_vae_depth{len(h_chan_sublist)}")
+    #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[0.1, 0.01, 0.001], il_list=[0.0, 0.1, 0.2], \
+    #                logfilename=f'log_{exp_data}_lidvae_lm.csv', resultname=f'result_{exp_data}_lidvae_lm', log_mse=True)
+
+    #h_chan_list = [32, 32, 32, 32, 32]
     #for i in range(len(h_chan_list)):
     #    h_chan_sublist = h_chan_list[:i]
-    #    exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[1.0], \
+    #    exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[0.1], \
     #        encoder_type=encoder_type, decoder_type=decoder_type, \
-    #        logfilename=f"log_vae_E{encoder_type}_D{decoder_type}_{exp_data}.csv", resultname=f"result_vae_E{encoder_type}_D{decoder_type}_{exp_data}")
+    #        logfilename=f"log_{exp_data}_vae_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_vae_depth{len(h_chan_sublist)}")
+        #exp_lrvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, \
+        #            beta_list=[0.000001, 0.0001, 0.01, 1.0], alpha_list=[0.01, 0.1, 0.2, 0.4, 1.0], pwise_reg=False, \
+        #            encoder_type=encoder_type, decoder_type=decoder_type, \
+        #            logfilename=f'log_{exp_data}_lrvae_depth{len(h_chan_sublist)}.csv', resultname=f'result_{exp_data}_lrvae_depth{len(h_chan_sublist)}')
+        #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[10.0], il_list=[0.0, 0.1, 0.2], \
+        #            logfilename=f'log_{exp_data}_lidvae_lm_depth{len(h_chan_sublist)}.csv', resultname=f'result_{exp_data}_lidvae_lm_depth{len(h_chan_sublist)}', log_mse=True) 
 
     #exp_vae(1, exp_epochs=4, batch_size=64, exp_data=exp_data, beta_list=[1.0], logfilename=f"TEST.csv", resultname=f"TEST")
 

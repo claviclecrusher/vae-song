@@ -416,3 +416,58 @@ def visualize_2c_points_on_image(tensor, label, resultname, name, epoch, tensor_
     plt.grid(True)
     os.makedirs(f"./results/{resultname}/{name}/scatter2d/", exist_ok=True)
     plt.savefig(f"./results/{resultname}/{name}/scatter2d/{epoch}_{tensor_name}.png")
+
+
+def visualize_flows(input, mu, z, output, resultname, name, epoch, num_flows=8):
+
+    # Flatten the input tensor to [N, C] where C is the product of all dimensions except the first one
+    input = input.reshape(input.shape[0], -1)
+    mu = mu.reshape(mu.shape[0], -1)
+    z = z.reshape(z.shape[0], -1)
+    output = output.reshape(output.shape[0], -1)
+
+    # Split the tensors into [num_flows, C]
+    input = input[:num_flows]
+    mu = mu[:num_flows]
+    z = z[:num_flows]
+    output = output[:num_flows]
+
+    # Convert tensors to numpy arrays if they are torch tensors
+    if torch.is_tensor(input):
+        input = input.cpu().detach().numpy()
+    if torch.is_tensor(mu):
+        mu = mu.cpu().detach().numpy()
+    if torch.is_tensor(z):
+        z = z.cpu().detach().numpy()
+    if torch.is_tensor(output):
+        output = output.cpu().detach().numpy()
+
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Generate a color for each point
+    colors = plt.cm.Spectral(np.linspace(0, 1, len(input)))
+
+    # Plot the points with different colors
+    dummy = [np.ones_like(input[0])*i for i in range(4)] # x-axis dummy values
+    for i in range(len(input)):
+        ax.scatter(dummy[0], input[i], color=colors[i], label='input' if i == 0 else "")
+        ax.scatter(dummy[1], mu[i], color=colors[i], label='mu' if i == 0 else "")
+        ax.scatter(dummy[2], z[i], color=colors[i], label='z' if i == 0 else "")
+        ax.scatter(dummy[3], output[i], color=colors[i], label='recon' if i == 0 else "")
+
+        # Draw lines between corresponding points
+        ax.plot([0, 1], [input[i], mu[i]], color=colors[i], linestyle='-')
+        ax.plot([1, 2], [mu[i], z[i]], color=colors[i], linestyle='-')
+        ax.plot([2, 3], [z[i], output[i]], color=colors[i], linestyle='-')
+
+    # Set labels and title
+    ax.set_xticks([0, 1, 2, 3])
+    ax.set_xticklabels(['input', 'mu', 'z', 'recon'])
+    ax.set_title('Visualized flows')
+    #ax.legend()
+
+    # Save the plot
+    os.makedirs(f"./results/{resultname}/{name}/visualize_flows/", exist_ok=True)
+    plt.savefig(f"./results/{resultname}/{name}/visualize_flows/{epoch}_flows.png")
+    plt.close()

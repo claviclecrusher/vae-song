@@ -51,7 +51,7 @@ class FlexibleVAE(VAE):
         alpha=0.0,
         is_log_mse=False,
         dataset=None,
-        z_source='qzx',
+        z_source='Ex',
         bal_alpha=True,
         pwise_reg=False,
         variational=True,
@@ -146,7 +146,7 @@ class FlexibleVAE(VAE):
             encoder.append(
                 torch.nn.Sequential(
                     torch.nn.Linear(last_channel, channel),
-                    torch.nn.BatchNorm1d(channel),
+                    torch.nn.BatchNorm1d(channel), 
                     torch.nn.LeakyReLU(),
                 )
             )
@@ -532,6 +532,12 @@ class LIDVAE(VAE):
             latent_channel = 32
             hidden_channels = [32, 64, 128] if hidden_channels == None else hidden_channels
             input_dim = 28
+        elif dataset == "pinwheel":
+            in_channel = 2
+            latent_channel = 2
+            hidden_channels = [32, 32, 32, 32] if hidden_channels == None else hidden_channels
+            input_dim = 1
+            data_type = '1d'
         else:
             raise ValueError(f"Invalid dataset: {dataset}")
 
@@ -549,12 +555,46 @@ class LIDVAE(VAE):
             fc_dim = (fc_dim - 1) // 2 + 1
         transpose_padding.reverse()
 
+        if data_type == '1d':
+            self.encoder = self.make_encoder_1d(hidden_channels, in_channel, latent_channel)
+            self.decoder = self.make_decoder_1d(in_channel, latent_channel, icnn_channels, input_dim)
+        else:
+            self.encoder = self.make_encoder_2d(hidden_channels, in_channel, latent_channel, fc_dim)
+            self.decoder = self.make_decoder_2d(in_channel, latent_channel, icnn_channels, input_dim)
+
+
+    def make_encoder_1d(self, hidden_channels, in_channel, latent_channel):
         # Make encoder
-        self.encoder = []
+        encoder = []
         last_channel = in_channel
 
         for channel in hidden_channels:
-            self.encoder.append(
+            encoder.append(
+                torch.nn.Sequential(
+                    torch.nn.Linear(last_channel, channel),
+                    torch.nn.BatchNorm1d(channel),
+                    torch.nn.LeakyReLU(),
+                )
+            )
+            last_channel = channel
+
+        encoder.append(
+            torch.nn.Sequential(
+                torch.nn.Linear(last_channel, latent_channel * 2),
+                torch.nn.BatchNorm1d(latent_channel * 2),
+                torch.nn.LeakyReLU(),
+                torch.nn.Linear(latent_channel * 2, latent_channel * 2),
+            )
+        )
+        return torch.nn.Sequential(*encoder)
+
+    def make_encoder_2d(self, hidden_channels, in_channel, latent_channel, fc_dim):
+        # Make encoder
+        encoder = []
+        last_channel = in_channel
+
+        for channel in hidden_channels:
+            encoder.append(
                 torch.nn.Sequential(
                     module.ResidualBlock(last_channel, channel, 2),
                     module.ResidualBlock(channel, channel, 1),
@@ -562,7 +602,7 @@ class LIDVAE(VAE):
             )
             last_channel = channel
 
-        self.encoder.append(
+        encoder.append(
             torch.nn.Sequential(
                 torch.nn.Flatten(),
                 torch.nn.Linear(last_channel * (fc_dim**2), latent_channel * 2),
@@ -571,13 +611,39 @@ class LIDVAE(VAE):
                 torch.nn.Linear(latent_channel * 2, latent_channel * 2),
             )
         )
-        self.encoder = torch.nn.Sequential(*self.encoder)
-
+        return torch.nn.Sequential(*encoder)
+    
+    def make_decoder_1d(self, in_channel, latent_channel, icnn_channels, input_dim):
         # Make decoder
-        self.decoder = []
+        decoder = []
 
         # First layer: ICNN in latent channel
-        self.decoder.append(module.ICNN(latent_channel, icnn_channels[0]))
+        decoder.append(module.ICNN(latent_channel, icnn_channels[0]))
+
+        # In the original implmentation,
+        # a trainable full-rank matrix is used as Beta via SVD (as in appendix)
+        # Here, we use an identity matrix for injective map (as in main text)
+        self.register_buffer(
+            "B",
+            torch.eye((input_dim) * in_channel, latent_channel, requires_grad=False),
+        )
+
+        # Second and last layer: ICNN in data dimension
+        decoder.append(module.ICNN((input_dim) * in_channel, icnn_channels[1]))
+
+        # dummy to fit index
+        decoder.append(torch.nn.Identity())
+
+        # Note that there is no range mapping!
+        # Use Clip or Sigmoid if you want
+        return torch.nn.ModuleList(decoder)
+
+    def make_decoder_2d(self, in_channel, latent_channel, icnn_channels, input_dim):
+        # Make decoder
+        decoder = []
+
+        # First layer: ICNN in latent channel
+        decoder.append(module.ICNN(latent_channel, icnn_channels[0]))
 
         # In the original implmentation,
         # a trainable full-rank matrix is used as Beta via SVD (as in appendix)
@@ -588,14 +654,15 @@ class LIDVAE(VAE):
         )
 
         # Second and last layer: ICNN in data dimension
-        self.decoder.append(module.ICNN((input_dim**2) * in_channel, icnn_channels[1]))
+        decoder.append(module.ICNN((input_dim**2) * in_channel, icnn_channels[1]))
 
         # Unflatten to shape of image
-        self.decoder.append(torch.nn.Unflatten(1, (in_channel, input_dim, input_dim)))
+        decoder.append(torch.nn.Unflatten(1, (in_channel, input_dim, input_dim)))
 
         # Note that there is no range mapping!
         # Use Clip or Sigmoid if you want
-        self.decoder = torch.nn.ModuleList(self.decoder)
+        return torch.nn.ModuleList(decoder)
+
 
     def encode(self, input):
         ret = self.encoder(input)
@@ -620,7 +687,7 @@ class LIDVAE(VAE):
    
     def forward(self, input, latent_recon=False, latent_rand_sampling=True):
         if latent_recon:
-            return self.forward_qzx(input, latent_rand_sampling=latent_rand_sampling) # should be equal to lrvae source
+            return self.forward_Ex(input, latent_rand_sampling=latent_rand_sampling) # should be equal to lrvae source
             # return self.forward_Ex(input)
         else:
             return self.forward_vae(input, latent_rand_sampling=latent_rand_sampling)
@@ -631,7 +698,7 @@ class LIDVAE(VAE):
             z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
         else:
             z = mu
-        return self.decode(z), mu, log_var
+        return self.decode(z), mu, log_var, z, None
     
     def forward_Ex(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x
         mu, log_var = self.encode(input)
@@ -662,7 +729,7 @@ class LIDVAE(VAE):
                 * torch.ones_like(input[0]).sum()
                 * (
                     (
-                        2 * torch.pi * ((input - output) ** 2).mean(1).mean(1).mean(1)
+                        2 * torch.pi * ((input - output) ** 2).reshape(input.size(0), -1).mean(dim=1)
                         + 1e-5  # To avoid log(0)
                     ).log()
                     + 1
