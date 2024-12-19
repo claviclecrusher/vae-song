@@ -26,7 +26,7 @@ class PlainConvolution(torch.nn.Module):
         return output
 
 
-class ResidualBlock(torch.nn.Module):
+class ResidualConvBlock(torch.nn.Module):
     def __init__(self, in_channel, out_channel, stride=1):
         super().__init__()
 
@@ -57,6 +57,41 @@ class ResidualBlock(torch.nn.Module):
         output = self.activation(output + self.identity(input))
 
         return output
+
+
+
+class ResidualMLPBlock(torch.nn.Module):
+    def __init__(self, in_channel, out_channel, stride=1):
+        super().__init__()
+
+        self.activation = torch.nn.LeakyReLU()
+
+        self.mlp1 = torch.nn.Sequential(
+            torch.nn.Linear(in_channel, out_channel),
+            torch.nn.BatchNorm1d(out_channel),
+            self.activation,
+        )
+
+        self.mlp2 = torch.nn.Sequential(
+            torch.nn.Linear(out_channel, out_channel),
+            torch.nn.BatchNorm1d(out_channel),
+        )
+
+        if stride == 1 and in_channel == out_channel:
+            self.identity = torch.nn.Identity()
+        else:
+            self.identity = torch.nn.Sequential(
+                torch.nn.Linear(in_channel, out_channel),
+                torch.nn.BatchNorm1d(out_channel),
+            )
+
+    def forward(self, input):
+        output = self.mlp1(input)
+        output = self.mlp2(output)
+        output = self.activation(output + self.identity(input))
+
+        return output
+
 
 
 class PositiveLinear(torch.nn.Module):

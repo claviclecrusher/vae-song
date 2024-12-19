@@ -35,6 +35,13 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         utils.visualize_2c_points_on_image(result[1], y, resultname, name, epoch, "mu") # only work on latent channel==2
         utils.visualize_2c_points_on_image(result[3], y, resultname, name, epoch, "z") # only work on latent channel==2
         utils.visualize_2c_points_on_image(result[0], y, resultname, name, epoch, "recon")
+        xpx = (
+                torch.randn((x.shape[0], model.latent_channel))
+                .requires_grad_(False)
+                .to(device)
+            )
+        sample_res = model.decode(xpx)
+        utils.visualize_2c_points_on_image(sample_res, y, resultname, name, epoch, "sample")
 
     if visualize:
         utils.visualize_flows(x, result[1], result[3], result[0], resultname, name, epoch)
@@ -70,7 +77,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
             # Save sampled example
             x = (
                 torch.randn((x.shape[0], model.latent_channel))
-                .requires_grad_(True)
+                .requires_grad_(False)
                 .to(device)
             )
             result = model.decode(x)
@@ -93,7 +100,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     
     train_dataset, test_dataset = dataset.load_dataset(dataset_name)
 
-    test_shuffle = True if dataset_name == 'pinwheel' else False
+    test_shuffle = True if (dataset_name == 'pinwheel' or dataset_name == 'chessboard') else False
     
     loader_train = DataLoader(
         train_dataset,
@@ -173,7 +180,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         writer.add_scalar("recon/train", loss_recon_total / len(loader_train), epoch)
         writer.add_scalar("reg/train", loss_reg_total / len(loader_train), epoch)
         
-        if dataset_name == 'pinwheel':
+        if dataset_name == 'pinwheel' or dataset_name == 'chessboard':
             data_type = '1d'
         #visualize, save_img = (True, True) if ((epoch == (epochs-1)) or ((epoch & (epoch - 1)) == 0)) else (False, False)
         visualize, save_img = (True, True) if (epoch == (epochs-1)) else (False, False)
@@ -257,15 +264,18 @@ def exp_lidvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=No
     for b in beta_list:
         for il in il_list:
             for i in range(niter):
-                train_and_test(Model.LIDVAE(is_log_mse=log_mse, inverse_lipschitz=il, beta=b, dataset=exp_data, hidden_channels=hchans), epochs=exp_epochs, batch_size=batch_size,
+                train_and_test(Model.LIDVAE(is_log_mse=log_mse, inverse_lipschitz=il, beta=b, dataset=exp_data, hidden_channels=hchans), 
+                               epochs=exp_epochs, batch_size=batch_size,
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
 
-def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae', pt_param=None, encoder_type='conv', decoder_type='mlp', fixed_var=False):
+def exp_vae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], logfilename='log_vae.csv', resultname='res_vae',
+            pt_param=None, encoder_type='conv', decoder_type='mlp', fixed_var=False, residual_connection=False):
     for b in beta_list:
         for i in range(niter):
-            train_and_test(Model.VanillaVAE(beta=b, dataset=exp_data, hidden_channels=hchans, encoder_type=encoder_type, decoder_type=decoder_type, fixed_var=fixed_var), epochs=exp_epochs, batch_size=batch_size,
+            train_and_test(Model.VanillaVAE(beta=b, dataset=exp_data, hidden_channels=hchans, encoder_type=encoder_type, decoder_type=decoder_type, fixed_var=fixed_var, residual_connection=residual_connection), 
+                           epochs=exp_epochs, batch_size=batch_size,
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
@@ -275,11 +285,13 @@ def exp_nae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None,
                            dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
-def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], z_source='Ex', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None, pwise_reg=False, encoder_type='conv', decoder_type='mlp'):
+def exp_lrvae(niter=1, exp_epochs=100, batch_size=128, exp_data=None, hchans=None, beta_list=[0.1], alpha_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], 
+            z_source='Ex', z_target='z', logfilename='log_lrvae.csv', resultname='res_lrvae', pt_param=None, pwise_reg=False, encoder_type='conv', decoder_type='mlp', residual_connection=False):
     for a in alpha_list:
         for b in beta_list:
             for i in range(niter):
-                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, dataset=exp_data, hidden_channels=hchans, pwise_reg=pwise_reg, encoder_type=encoder_type, decoder_type=decoder_type), epochs=exp_epochs, batch_size=batch_size,
+                train_and_test(Model.LRVAE(beta=b, alpha=a, z_source=z_source, z_target=z_target, dataset=exp_data, hidden_channels=hchans, pwise_reg=pwise_reg, encoder_type=encoder_type, decoder_type=decoder_type, residual_connection=residual_connection), 
+                               epochs=exp_epochs, batch_size=batch_size,
                                dataset_name=exp_data, logfilename=logfilename, resultname=resultname, pt_param=pt_param)
     return
 
@@ -309,6 +321,11 @@ if __name__ == "__main__":
     decoder_type = 'mlp'
     bsize = 1000
     exp_epochs = 1000
+    residual_connection = False
+    if residual_connection:
+        str_res='_res'
+    else:
+        str_res=''
     #h_chan_list = []
     #exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_list, beta_list=[0.000001, 0.0001, 0.01, 1.0], \
     #        encoder_type=encoder_type, decoder_type=decoder_type, \
@@ -317,14 +334,14 @@ if __name__ == "__main__":
     #        encoder_type=encoder_type, decoder_type=decoder_type, \
     #        logfilename=f"log_{exp_data}_nae_linear.csv", resultname=f"result_{exp_data}_nae_linear")
 
-    h_chan_sublist = [32, 32, 32, 32]
-    #exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[0.02, 0.03, 0.04, 0.05, 0.06, 0.06, 0.07, 0.08, 0.09], \
-    #        encoder_type=encoder_type, decoder_type=decoder_type, \
-    #        logfilename=f"log_{exp_data}_vae_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_vae_depth{len(h_chan_sublist)}")
+    h_chan_sublist = [32, 32, 32, 32, 32, 32, 32, 32]
+    exp_vae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, beta_list=[0.01, 0.1, 0.2], \
+            encoder_type=encoder_type, decoder_type=decoder_type, residual_connection=residual_connection, \
+            logfilename=f"log_{exp_data}_vae{str_res}_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_vae{str_res}_depth{len(h_chan_sublist)}")
     exp_lrvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, hchans=h_chan_sublist, \
-            beta_list=[0.01], alpha_list=[0.1, 0.4, 1.0]\
-            encoder_type=encoder_type, decoder_type=decoder_type, \
-            logfilename=f"log_{exp_data}_vae_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_vae_depth{len(h_chan_sublist)}")
+            beta_list=[0.01, 0.1, 0.2], alpha_list=[0.1, 0.2, 0.4], \
+            encoder_type=encoder_type, decoder_type=decoder_type, residual_connection=residual_connection, \
+            logfilename=f"log_{exp_data}_lrvae{str_res}_depth{len(h_chan_sublist)}.csv", resultname=f"result_{exp_data}_lrvae{str_res}_depth{len(h_chan_sublist)}")
     #exp_lidvae(1, exp_epochs=exp_epochs, batch_size=bsize, exp_data=exp_data, beta_list=[0.1, 0.01, 0.001], il_list=[0.0, 0.1, 0.2], \
     #                logfilename=f'log_{exp_data}_lidvae_lm.csv', resultname=f'result_{exp_data}_lidvae_lm', log_mse=True)
 

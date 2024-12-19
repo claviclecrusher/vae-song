@@ -52,11 +52,13 @@ class FlexibleVAE(VAE):
         is_log_mse=False,
         dataset=None,
         z_source='Ex',
+        z_target='z',
         bal_alpha=True,
         pwise_reg=False,
         variational=True,
         encoder_type='mlp',
         decoder_type='mlp',
+        residual_connection=False,
         fixed_var=False,
     ):
         """
@@ -82,7 +84,7 @@ class FlexibleVAE(VAE):
             latent_channel = 32
             hidden_channels = [32, 64, 128, 256] if hidden_channels == None else hidden_channels
             input_dim = 28
-        elif dataset == "pinwheel":
+        elif (dataset == "pinwheel") or (dataset == "chessboard"):
             in_channel = 2
             latent_channel = 2
             hidden_channels = [2, 2, 2, 2] if hidden_channels == None else hidden_channels
@@ -97,14 +99,16 @@ class FlexibleVAE(VAE):
         self.beta = beta
         self.alpha = alpha
         self.z_source = z_source
+        self.z_target = z_target
         self.wu_alpha = 0.0
         self.is_log_mse = is_log_mse
         self.balanced_alpha = bal_alpha
         self.pwise_reg = pwise_reg
         self.fixed_var = fixed_var
         self.data_type = '2d' # for image dataset
+        self.residual_connection = residual_connection
 
-        if dataset in ['pinwheel']:
+        if dataset in ['pinwheel', 'chessboard']:
             self.data_type = '1d'
             
         fc_dim = input_dim
@@ -117,7 +121,10 @@ class FlexibleVAE(VAE):
 
         # Make encoder
         if self.data_type == '1d' and encoder_type == 'mlp':
-            self.encoder = self.make_encoder_mlp_1d(hidden_channels, in_channel, latent_channel)
+            if self.residual_connection:
+                self.encoder = self.make_encoder_residual_mlp_1d(hidden_channels, in_channel, latent_channel)
+            else:   
+                self.encoder = self.make_encoder_mlp_1d(hidden_channels, in_channel, latent_channel)
         elif encoder_type == 'mlp':
             self.encoder = self.make_encoder_mlp_2d(hidden_channels, in_channel, latent_channel)
         elif encoder_type == 'conv':
@@ -127,8 +134,11 @@ class FlexibleVAE(VAE):
             exit()
 
         # Make decoder
-        if self.data_type == '1d' and encoder_type == 'mlp':
-            self.decoder = self.make_decoder_mlp_1d(in_channel, latent_channel, list(reversed(hidden_channels)))
+        if self.data_type == '1d' and decoder_type == 'mlp':
+            if self.residual_connection:
+                self.decoder = self.make_decoder_residual_mlp_1d(in_channel, latent_channel, list(reversed(hidden_channels)))
+            else:
+                self.decoder = self.make_decoder_mlp_1d(in_channel, latent_channel, list(reversed(hidden_channels)))
         elif decoder_type == 'mlp':
             self.decoder = self.make_decoder_mlp_2d(in_channel, latent_channel, input_dim)
         elif decoder_type == 'conv':
@@ -158,6 +168,25 @@ class FlexibleVAE(VAE):
                 #torch.nn.BatchNorm1d(latent_channel * 2),
                 #torch.nn.LeakyReLU(),
                 torch.nn.Linear(last_channel, latent_channel * 2),
+            )
+        )
+        encoder = torch.nn.Sequential(*encoder)
+        return encoder
+
+    def make_encoder_residual_mlp_1d(self, hidden_channels, in_channel, latent_channel):
+        last_channel = in_channel
+        encoder = []
+        for channel in hidden_channels:
+            encoder.append(
+                torch.nn.Sequential(
+                    module.ResidualMLPBlock(last_channel, channel),
+                )
+            )
+            last_channel = channel
+
+        encoder.append(
+            torch.nn.Sequential(
+                module.ResidualMLPBlock(last_channel, latent_channel * 2),
             )
         )
         encoder = torch.nn.Sequential(*encoder)
@@ -194,8 +223,8 @@ class FlexibleVAE(VAE):
         for channel in hidden_channels:
             encoder.append(
                 torch.nn.Sequential(
-                    module.ResidualBlock(last_channel, channel, 2),
-                    module.ResidualBlock(channel, channel, 1),
+                    module.ResidualConvBlock(last_channel, channel, 2),
+                    module.ResidualConvBlock(channel, channel, 1),
                 )
             )
             last_channel = channel
@@ -248,6 +277,37 @@ class FlexibleVAE(VAE):
         decoder = torch.nn.Sequential(*decoder)
         return decoder
 
+
+    def make_decoder_residual_mlp_1d(self, in_channel, latent_channel, hidden_channels=[]):
+        # First layer: half of final dimension
+        decoder = []
+        last_channel = latent_channel
+        channel = in_channel
+
+        for channel in hidden_channels:
+            decoder.append(
+                torch.nn.Sequential(
+                    module.ResidualMLPBlock(last_channel, channel),
+                )
+            )
+            last_channel = channel
+
+        # Second and last layer: full dimension
+        last_channel = channel
+        channel = in_channel
+        decoder.append(
+            torch.nn.Sequential(
+                module.ResidualMLPBlock(last_channel, channel),
+            )
+        )
+
+        # Note that there is no range mapping!
+        # Use Clip or Sigmoid if you want
+        decoder = torch.nn.Sequential(*decoder)
+        return decoder
+
+
+
     def make_decoder_mlp_2d(self, in_channel, latent_channel, input_dim):
         # First layer: half of final dimension
         decoder = []
@@ -295,7 +355,7 @@ class FlexibleVAE(VAE):
                 torch.nn.BatchNorm1d(last_channel * (fc_dim**2)),
                 torch.nn.LeakyReLU(),
                 torch.nn.Unflatten(1, (last_channel, fc_dim, fc_dim)),
-                module.ResidualBlock(last_channel, last_channel, 1),
+                module.ResidualConvBlock(last_channel, last_channel, 1),
             )
         )
 
@@ -532,10 +592,10 @@ class LIDVAE(VAE):
             latent_channel = 32
             hidden_channels = [32, 64, 128] if hidden_channels == None else hidden_channels
             input_dim = 28
-        elif dataset == "pinwheel":
+        elif dataset == "pinwheel" or dataset == "chessboard":
             in_channel = 2
             latent_channel = 2
-            hidden_channels = [32, 32, 32, 32] if hidden_channels == None else hidden_channels
+            hidden_channels = [2, 2, 2, 2] if hidden_channels == None else hidden_channels
             input_dim = 1
             data_type = '1d'
         else:
@@ -596,8 +656,8 @@ class LIDVAE(VAE):
         for channel in hidden_channels:
             encoder.append(
                 torch.nn.Sequential(
-                    module.ResidualBlock(last_channel, channel, 2),
-                    module.ResidualBlock(channel, channel, 1),
+                    module.ResidualConvBlock(last_channel, channel, 2),
+                    module.ResidualConvBlock(channel, channel, 1),
                 )
             )
             last_channel = channel
