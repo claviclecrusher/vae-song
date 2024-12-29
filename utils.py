@@ -405,11 +405,13 @@ def visualize_2c_points_on_image(tensor, label, resultname, name, epoch, tensor_
         label = label.cpu().detach().numpy()
     
     # 텐서의 크기를 확인
+    if tensor.ndim == 3:
+        tensor = tensor.reshape(-1, tensor.shape[-1])
     assert tensor.shape[1] == 2, f"Tensor must have shape [N, 2] but given shape is {tensor.shape}"
     
     # 점을 시각화
     FONTSIZE = 16
-    plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(8, 8))
     plt.scatter(tensor[:, 0], tensor[:, 1], c=label, cmap='tab10', marker='o')
     plt.title(f'{tensor_name}', fontsize=FONTSIZE)
     #plt.xlabel('X-axis')
@@ -419,7 +421,7 @@ def visualize_2c_points_on_image(tensor, label, resultname, name, epoch, tensor_
     plt.grid(False)
     os.makedirs(f"./results/{resultname}/{name}/scatter2d/", exist_ok=True)
     plt.savefig(f"./results/{resultname}/{name}/scatter2d/{epoch}_{tensor_name}.png", bbox_inches='tight', pad_inches=0.1)
-
+    plt.close(fig)
 
 
 

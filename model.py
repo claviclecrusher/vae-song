@@ -52,7 +52,6 @@ class FlexibleVAE(VAE):
         is_log_mse=False,
         dataset=None,
         z_source='Ex',
-        z_target='z',
         bal_alpha=True,
         pwise_reg=False,
         variational=True,
@@ -99,7 +98,6 @@ class FlexibleVAE(VAE):
         self.beta = beta
         self.alpha = alpha
         self.z_source = z_source
-        self.z_target = z_target
         self.wu_alpha = 0.0
         self.is_log_mse = is_log_mse
         self.balanced_alpha = bal_alpha
@@ -394,15 +392,42 @@ class FlexibleVAE(VAE):
     def decode(self, input):
         return self.decoder(input)
 
-    def forward(self, input, latent_recon=True, latent_rand_sampling=True):
+
+    def forward(self, input, latent_rand_sampling=True, L=1): # L: number of samples for MC
+        mu, log_var = self.encode(input)
+
+        if latent_rand_sampling:
+            # [L, B, D] 형태로 한번에 랜덤 샘플 생성
+            eps = torch.randn(L, *mu.shape, device=mu.device)
+            input_z_stack = mu.unsqueeze(0) + eps * torch.exp(log_var * 0.5).unsqueeze(0)
+        else:
+            input_z_stack = mu.unsqueeze(0)
+
+        # [L, B, D] -> [L*B, D] 형태로 변환하여 한번에 디코딩
+        B = input.shape[0]
+        input_z_flat = input_z_stack.view(-1, input_z_stack.shape[-1])
+        recon_flat = self.decode(input_z_flat)
+        recon_stack = recon_flat.view(L, B, *recon_flat.shape[1:])
+
+        # [L*B, D] -> [L, B, D] 형태로 변환하여 한번에 인코딩
+        recon_flat_for_lr = self.decode(input_z_flat.detach()) # 첫 encoder에 영향을 주지 않기 위해서 detach
+        z_recon_flat, _ = self.encode(recon_flat_for_lr)
+        z_recon_stack = z_recon_flat.view(L, B, *z_recon_flat.shape[1:])
+
+        #z_for_lr_stack = input_z_flat.detach().view(L, B, *input_z_flat.shape[1:]) # reshape to match z_recon_stack
+
+        return recon_stack.mean(dim=0), mu, log_var, input_z_stack, z_recon_stack # recon은 평균값을 취하고 z에 대해서는 각각 계산
+
+
+    def forward_regacy(self, input, latent_recon=True, latent_rand_sampling=True, L=1):
         if self.variational == False:
             return self.forward_ae(input)
         if self.z_source == 'pz':
-            return self.forward_pz(input, latent_rand_sampling=latent_rand_sampling)
+            return self.forward_pz(input, latent_rand_sampling=latent_rand_sampling, L=L)
         elif self.z_source == 'qzx':
-            return self.forward_qzx(input, latent_rand_sampling=latent_rand_sampling)
+            return self.forward_qzx(input, latent_rand_sampling=latent_rand_sampling, L=L)
         elif self.z_source == 'Ex':
-            return self.forward_Ex(input, latent_rand_sampling=latent_rand_sampling)
+            return self.forward_Ex(input, latent_rand_sampling=latent_rand_sampling, L=L)
         else:
             print('Invalid z_source')
             exit(1)
@@ -411,7 +436,7 @@ class FlexibleVAE(VAE):
         z, _ = self.encode(input)
         return self.decode(z), z, 0.0, z, 0.0
     
-    def forward_Ex(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x
+    def forward_Ex(self, input, latent_rand_sampling=True, L=1): # Latent reconstruction, z is encoded from x
         mu, log_var = self.encode(input)
         if self.fixed_var != False:
             log_var = torch.log(torch.ones_like(log_var) * self.fixed_var)
@@ -423,7 +448,7 @@ class FlexibleVAE(VAE):
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, z, z_recon
     
-    def forward_qzx(self, input, latent_rand_sampling=True): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
+    def forward_qzx(self, input, latent_rand_sampling=True, L=1): # Latent reconstruction, z is encoded from x, z is reconstructed to mu
         mu, log_var = self.encode(input)
         if self.fixed_var != False:
             log_var = torch.log(torch.ones_like(log_var) * self.fixed_var)
@@ -435,7 +460,7 @@ class FlexibleVAE(VAE):
         z_recon, _ = self.encode(recon)
         return recon, mu, log_var, mu, z_recon
 
-    def forward_pz(self, input, latent_rand_sampling=True): # Latent reconstruction, z is sampled from p(z)
+    def forward_pz(self, input, latent_rand_sampling=True, L=1): # Latent reconstruction, z is sampled from p(z)
         mu, log_var = self.encode(input)
         if self.fixed_var != False:
             log_var = torch.log(torch.ones_like(log_var) * self.fixed_var)
@@ -478,6 +503,12 @@ class VanillaVAE(FlexibleVAE):
     def __init__(self, **kwargs):
         super(VanillaVAE, self).__init__(**kwargs)
 
+    #def loss(self, input, output, mu, log_var, z_input=None, z_recon=None, L=1):
+    #    if L == 1:
+    #        return self.loss_naive(input, output, mu, log_var, z_input, z_recon)
+    #    else:
+    #        return self.loss_mc(input, output, mu, log_var, z_input, z_recon)
+
     def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
         loss_recon = (
             ((input - output) ** 2).mean(dim=0).sum()
@@ -489,8 +520,26 @@ class VanillaVAE(FlexibleVAE):
             ).mean()
         )
         loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+        loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
 
-        return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), 0.0
+        return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), loss_lr.detach()
+
+
+    #def loss_mc(self, input, output, mu, log_var, z_input, z_recon): # output:[L,B,C,H,W], z_input:[L,B,D], z_recon:[L,B,D]
+    #    loss_recon = (
+    #        ((input.unsqueeze(0) - output) ** 2).mean(dim=0).sum()
+    #        if not self.is_log_mse
+    #        else (0.5 * torch.ones_like(input[0]).sum()
+    #            * (( 2 * torch.pi * ((input.unsqueeze(0) - output) ** 2).mean(2).mean(2).mean(2)
+    #                    + 1e-5  # To avoid log(0)
+    #                ).log() + 1)
+    #        ).mean()
+    #    )
+    #    loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+    #    loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
+
+    #    return loss_recon + loss_reg * self.beta + loss_lr * self.alpha * self.wu_alpha, loss_recon.detach(), loss_reg.detach(), loss_lr.detach()
+
 
 
 class LRVAE(FlexibleVAE):
@@ -518,6 +567,14 @@ class LRVAE(FlexibleVAE):
                 self.wu_alpha = min(1.0/((epoch%repeat_interval)+1), 1.0)
         return True
 
+
+    #def loss(self, input, output, mu, log_var, z_input, z_recon, L=1):
+    #    if L == 1:
+    #        return self.loss_naive(input, output, mu, log_var, z_input, z_recon)
+    #    else:
+    #        return self.loss_mc(input, output, mu, log_var, z_input, z_recon)
+
+
     def loss(self, input, output, mu, log_var, z_input, z_recon):
         loss_recon = (
             ((input - output) ** 2).mean(dim=0).sum()
@@ -535,17 +592,33 @@ class LRVAE(FlexibleVAE):
             ).mean()
         )
         loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
+
+        
         loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+
         if self.pwise_reg:
             mu_zp = z_input.mean(dim=1, keepdim=True)
             logvar_zp = torch.log(((z_input - mu_zp) ** 2).mean(dim=1))
             loss_reg = loss_reg/2.0 + (-0.5 * (1 + logvar_zp - mu_zp**2 - logvar_zp.exp())).mean(dim=1).sum()/2.0
 
-        if self.balanced_alpha:
-            return loss_recon*(1-self.alpha*self.wu_alpha) + loss_reg*self.beta + loss_lr*self.alpha*self.wu_alpha, loss_recon.detach(), loss_reg.detach(), loss_lr.detach()
-        else:
-            return loss_recon + loss_reg * self.beta + loss_lr * self.alpha * self.wu_alpha, loss_recon.detach(), loss_reg.detach(), loss_lr.detach()
+        return loss_recon + loss_reg * self.beta + loss_lr * self.alpha * self.wu_alpha, loss_recon, loss_reg * self.beta, loss_lr * self.alpha * self.wu_alpha
 
+    #def loss_mc(self, input, output, mu, log_var, z_input, z_recon):
+        # output, z_input, z_recon are stacked tensors with shape [L, batch_size, ...]
+        # loss_recon = (
+        #     ((input.unsqueeze(0) - output) ** 2).mean(dim=1).sum()
+        #     if not self.is_log_mse
+        #     else (0.5 * torch.ones_like(input[0]).sum()
+        #         * (( 2 * torch.pi * ((input.unsqueeze(0) - output) ** 2).mean(2).mean(2).mean(2)
+        #                 + 1e-5  # To avoid log(0)
+        #             ).log() + 1)
+        #     ).mean()
+        # ).mean(0)  # Average over L samples
+
+        # loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+        # loss_lr = ((z_input - z_recon) ** 2).mean(dim=1).sum().mean(0)  # Average over L samples
+
+        # return loss_recon + loss_reg * self.beta + loss_lr * self.alpha * self.wu_alpha, loss_recon.detach(), loss_reg.detach(), loss_lr.detach()
 
 
 
