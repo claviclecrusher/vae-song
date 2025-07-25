@@ -128,6 +128,7 @@ dependencies:
       - joblib==1.4.2
       - kiwisolver==1.4.7
       - matplotlib==3.9.2
+      - pandas==2.3.1
       - pinwheel==0.0.0
       - pyparsing==3.2.0
       - python-dateutil==2.9.0.post0

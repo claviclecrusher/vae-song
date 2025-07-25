@@ -132,6 +132,42 @@ class PinwheelDataset(Dataset):
         return features, labels
 
 
+class GridMixtureDataset(Dataset):
+    """
+    KxK 그리드 형태로 N0개씩 가우시안 샘플을 생성하는 데이터셋
+    Args:
+        K (int): 그리드 차원 수
+        N0 (int): 셀 당 샘플 개수
+        std (float): 가우시안 표준편차
+        L (float): 그리드 크기 (0~L 범위)
+    """
+    def __init__(self, K, N0, std=0.1, L=1.0):
+        self.K = K
+        self.N0 = N0
+        self.std = std
+        self.L = L
+        # 그리드 중심점 생성
+        centers_x = np.linspace(0, L, K)
+        centers_y = np.linspace(0, L, K)
+        points = []
+        labels = []
+        for idx, (cx, cy) in enumerate([(x, y) for x in centers_x for y in centers_y]):
+            pts = np.random.randn(N0, 2) * std + np.array([cx, cy])
+            points.append(pts)
+            labels.append(np.full(N0, idx))
+        X = np.vstack(points).astype(np.float32)
+        y = np.concatenate(labels).astype(np.int64)
+        # 텐서화하여 속성으로 저장
+        self.X = torch.from_numpy(X)
+        self.y = torch.from_numpy(y)
+
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+
 def load_dataset(dataset_name):
     if dataset_name == 'mnist':
         train_transform = torchvision.transforms.Compose([
