@@ -1,12 +1,62 @@
-This code was written by Hyunsoo Song (clavicle.shatter@gmail.com) and Seungwhan Kim (overnap@gmail.com).
+# VAE-Song
 
+Flexible Variational Autoencoder Framework for Multiple Datasets
 
+## Project Overview
+This repository provides a flexible implementation of Variational Autoencoders (VAEs) that can be applied to both image and two-dimensional point datasets. Supported datasets include MNIST, Fashion-MNIST, CelebA, CIFAR-10, Omniglot, as well as synthetic 2D distributions such as Pinwheel and Chessboard.
 
+## Key Features
+- Modular architecture supporting MLP, convolutional, and residual blocks
+- Choice of decoder: standard neural network or ICNN-based Brenier map
+- Support for different VAE variants: Beta-VAE, Latent Reconstruction VAE (LR-VAE), and Lipschitz Invertible Decoder VAE (LID-VAE)
+- YAML-based configuration for reproducible experiments
+- Integrated logging with TensorBoard and CSV output
+- Built-in visualization tools: PCA plots, t-SNE, optimal transport heatmaps, and sample trajectories
+
+## Installation
+```bash
+git clone <repository_url>
+cd vae-song
+# Create and activate conda environment
+conda env create -f lrvae_env.yaml
 conda activate lrvae
-conda env export > lrvae_env.yaml
-git add ./
-git commit -m ""
-git push origin master
+# Install additional requirements if needed
+pip install -r requirements.txt
+```
 
-nvitop # not installed yet
-nvtop
+## Usage
+To run a default experiment on the Pinwheel dataset:
+```bash
+python main.py
+```
+To run with a different configuration file:
+```bash
+python main.py --config configs/config_vae.yaml
+python run_alpha_experiment.py --alphas 0.5 0.1
+```
+Experiment logs will be saved under `runs/` for TensorBoard and `results/` for images and model checkpoints.
+
+## Project Structure
+```
+vae-song/
+├── main.py          # Main training and evaluation script
+├── dataset.py       # Data loading and preprocessing
+├── model.py         # VAE model definitions (FlexibleVAE, VanillaVAE, LIDVAE, etc.)
+├── utils.py         # Utility functions for visualization and metrics
+├── module.py        # Building blocks (residual blocks, ICNN, etc.)
+├── configs/         # YAML configuration files for experiments
+├── runs/            # TensorBoard log directory
+├── results/         # Output images and saved model checkpoints
+├── README.md        # Project overview and instructions
+└── lrvae_env.yaml   # Conda environment specification
+```
+
+## Authors
+- Hyunsoo Song (clavicle.shatter@gmail.com / song@nims.re.kr)
+- Seungwhan Kim (overnap@gmail.com / seunghwan.kim@snu.ac.kr)
+
+## License
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+
+
