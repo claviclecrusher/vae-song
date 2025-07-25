@@ -6,7 +6,7 @@ import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from dataset import GridMixtureDataset, WeightedGridMixtureDataset
+from dataset import GridMixtureDataset, WeightedGridMixtureDataset, RandomGaussianMixtureDataset
 from model import LRVAE
 from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap
 
@@ -42,13 +42,30 @@ def main():
     parser.add_argument('--test_N0', type=int, default=None, help='테스트용 셀당 샘플 개수')
     parser.add_argument('--auto_weights', action='store_true', help='훈련용 가중치를 자동으로 생성 (불균일)')
     parser.add_argument('--seed', type=int, default=None, help='auto_weights seed')
+    parser.add_argument('--random_mixture', action='store_true', help='Use random Gaussian mixture dataset')
+    parser.add_argument('--num_components', type=int, default=None, help='Number of Gaussian components')
+    parser.add_argument('--rgm_weights', nargs='+', type=float, default=None, help='Weights for Gaussian components')
+    parser.add_argument('--rgm_total', type=int, default=None, help='Total samples for Gaussian mixture')
+    parser.add_argument('--rgm_std', type=float, default=None, help='Std for Gaussian components')
+    parser.add_argument('--rgm_L', type=float, default=None, help='Range L for Gaussian centers')
+    parser.add_argument('--rgm_seed', type=int, default=None, help='Seed for Gaussian mixture')
     parser.add_argument('--grid_model', action='store_true', help='Use deeper network architecture for grid data')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     # 훈련용 데이터 분포 설정: 명시적 weights 또는 auto_weights가 설정되면 불균일, 아니면 균일
-    if args.train_weights is not None or args.auto_weights:
+    if args.random_mixture:
+        assert args.num_components is not None, '--num_components is required for random_mixture'
+        total = args.rgm_total if args.rgm_total is not None else args.K * args.K * args.N0
+        Lval = args.rgm_L if args.rgm_L is not None else 1.0
+        stdval = args.rgm_std if args.rgm_std is not None else args.std
+        dataset = RandomGaussianMixtureDataset(
+            args.num_components, total,
+            weights=args.rgm_weights,
+            std=stdval, L=Lval,
+            seed=args.rgm_seed)
+    elif args.train_weights is not None or args.auto_weights:
         # weights 결정
         if args.train_weights is not None:
             train_weights = args.train_weights

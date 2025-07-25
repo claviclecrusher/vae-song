@@ -218,6 +218,61 @@ class WeightedGridMixtureDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
+# --- Random Gaussian Mixture Dataset ---
+class RandomGaussianMixtureDataset(Dataset):
+    """
+    전체 공간 [0, L] 내에 num_components개의 가우시안 컴포넌트를 랜덤하게 배치하고,
+    각 컴포넌트에서 불균일한 수의 샘플을 추출하는 데이터셋
+
+    Args:
+        num_components (int): 가우시안 컴포넌트 수
+        total_samples (int): 전체 샘플 수
+        weights (list[float], optional): 각 컴포넌트별 샘플 비율(합 1). 지정 없으면 균일 분포
+        std (float): 각 컴포넌트의 가우시안 표준편차
+        L (float): 중심 좌표 생성 범위 (0~L)
+        seed (int, optional): 랜덤 시드
+    """
+    def __init__(self, num_components, total_samples, weights=None, std=0.1, L=1.0, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+        self.num_components = num_components
+        self.std = std
+        self.L = L
+        # 가우시안 중심을 0~L 구간에서 랜덤 샘플
+        centers = np.random.uniform(0, L, size=(num_components, 2))
+        # 컴포넌트별 가중치 설정
+        if weights is None:
+            w = np.ones(num_components, dtype=np.float32) / num_components
+        else:
+            w = np.array(weights, dtype=np.float32)
+            w = w / w.sum()
+        # 샘플 수 결정
+        counts = (w * total_samples).astype(int)
+        remainder = total_samples - counts.sum()
+        # 잔여는 첫 컴포넌트에 추가
+        if remainder > 0:
+            counts[0] += remainder
+        # 샘플 생성
+        points, labels = [], []
+        for idx in range(num_components):
+            cnt = counts[idx]
+            if cnt <= 0:
+                continue
+            mu = centers[idx]
+            pts = np.random.randn(cnt, 2) * std + mu
+            points.append(pts)
+            labels.append(np.full(cnt, idx))
+        X = np.vstack(points).astype(np.float32)
+        y = np.concatenate(labels).astype(np.int64)
+        self.X = torch.from_numpy(X)
+        self.y = torch.from_numpy(y)
+
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
 
 def load_dataset(dataset_name):
     if dataset_name == 'mnist':
