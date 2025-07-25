@@ -39,13 +39,26 @@ def main():
     parser.add_argument('--train_weights', nargs='+', type=float, default=None, help='훈련용 셀별 가중치 (길이 K*K)')
     parser.add_argument('--train_total', type=int, default=None, help='훈련용 전체 샘플 수')
     parser.add_argument('--test_N0', type=int, default=None, help='테스트용 셀당 샘플 개수')
+    parser.add_argument('--auto_weights', action='store_true', help='훈련용 가중치를 자동으로 생성 (불균일)')
+    parser.add_argument('--seed', type=int, default=None, help='auto_weights seed')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    if args.train_weights is not None:
-        assert args.train_total is not None, '--train_total must be specified when using --train_weights'
-        dataset = WeightedGridMixtureDataset(args.K, args.train_weights, args.train_total, std=args.std, L=1.0)
+    # 훈련용 데이터 분포 설정: 명시적 weights 또는 auto_weights가 설정되면 불균일, 아니면 균일
+    if args.train_weights is not None or args.auto_weights:
+        # weights 결정
+        if args.train_weights is not None:
+            train_weights = args.train_weights
+        else:
+            if args.seed is not None:
+                np.random.seed(args.seed)
+            w = np.random.rand(args.K * args.K)
+            w = w / w.sum()
+            train_weights = w.tolist()
+        # total 샘플 수 결정
+        train_total = args.train_total if args.train_total is not None else args.K * args.K * args.N0
+        dataset = WeightedGridMixtureDataset(args.K, train_weights, train_total, std=args.std, L=1.0)
     else:
         dataset = GridMixtureDataset(args.K, args.N0, std=args.std, L=1.0)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)

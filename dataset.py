@@ -187,13 +187,17 @@ class WeightedGridMixtureDataset(Dataset):
         centers_y = np.linspace(0, L, K)
         cell_centers = [(x, y) for x in centers_x for y in centers_y]
 
-        # 셀 인덱스 샘플링
-        cell_ids = np.random.choice(K*K, size=total_samples, p=w)
+        # 셀별 정확한 샘플 개수 결정 (가중치 기반)
+        counts = (w * total_samples).astype(int)
+        remainder = total_samples - counts.sum()
+        counts[0] += remainder
+
+        # 각 셀에 대해 지정된 개수만큼 샘플 생성
         points = []
         labels = []
         for idx in range(K*K):
-            cnt = int((cell_ids == idx).sum())
-            if cnt == 0:
+            cnt = counts[idx]
+            if cnt <= 0:
                 continue
             cx, cy = cell_centers[idx]
             pts = np.random.randn(cnt, 2) * std + np.array([cx, cy])
