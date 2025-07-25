@@ -17,7 +17,8 @@ def train_model(model, loader, epochs, lr, device):
         for X, _ in loader:
             X = X.to(device)
             optimizer.zero_grad()
-            loss, _, _, _ = model.loss(X)
+            recon, mu, log_var, input_z_stack, z_recon_stack = model(X)
+            loss, _, _, _ = model.loss(X, recon, mu, log_var, input_z_stack, z_recon_stack)
             loss.backward()
             optimizer.step()
     return model
