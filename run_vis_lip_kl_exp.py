@@ -65,19 +65,18 @@ def main():
         dataset = GridMixtureDataset(args.K, args.N0, std=args.std, L=1.0)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-    # Training data distribution visualization (grayscale heatmap + red dots)
-    counts = np.bincount(dataset.y.cpu().numpy(), minlength=args.K * args.K)
-    # heatmap 그레이스케일
-    arr = counts.reshape(args.K, args.K)
+    # Training data distribution visualization (grayscale heatmap with actual data points)
+    counts = np.bincount(dataset.y.cpu().numpy(), minlength=dataset.K * dataset.K)
+    arr = counts.reshape(dataset.K, dataset.K)
     plt.figure()
-    plt.imshow(arr, cmap='gray', origin='lower')
+    # heatmap with continuous extent based on dataset.L
+    extent = [0, dataset.L, 0, dataset.L]
+    plt.imshow(arr, cmap='gray', origin='lower', extent=extent, interpolation='nearest')
     plt.colorbar()
     plt.title('Training Data Distribution')
-    # 실제 샘플 포인트 표시 (cell index 기준)
-    cell_idxs = dataset.y.cpu().numpy()
-    xs = cell_idxs % args.K
-    ys = cell_idxs // args.K
-    plt.scatter(xs, ys, c='red', s=2, alpha=0.6)
+    # actual data points overlay
+    X = dataset.X.cpu().numpy()
+    plt.scatter(X[:, 0], X[:, 1], c='red', s=2, alpha=0.6)
     plt.savefig(os.path.join(args.output_dir, 'train_distribution.png'))
     plt.close()
 

@@ -180,6 +180,9 @@ class WeightedGridMixtureDataset(Dataset):
     """
     def __init__(self, K, weights, total_samples, std=0.1, L=1.0):
         assert len(weights) == K*K, "weights 길이는 K*K여야 합니다"
+        # store grid parameters
+        self.K = K
+        self.L = L
         w = np.array(weights, dtype=np.float32)
         w = w / w.sum()
         # 그리드 중심 좌표
