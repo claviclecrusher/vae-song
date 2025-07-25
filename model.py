@@ -1,5 +1,6 @@
 import torch
 import module
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
@@ -147,48 +148,41 @@ class FlexibleVAE(VAE):
 
         return
 
-    def make_encoder_mlp_1d(self, hidden_channels, in_channel, latent_channel):
-        last_channel = in_channel
-        encoder = []
-        for channel in hidden_channels:
-            encoder.append(
-                torch.nn.Sequential(
-                    torch.nn.Linear(last_channel, channel),
-                    torch.nn.BatchNorm1d(channel), 
-                    torch.nn.LeakyReLU(),
-                )
-            )
-            last_channel = channel
+    # --- 공통 MLP 블록 생성 헬퍼 ---
+    def _build_mlp(self, hidden_channels, in_ch, out_ch, block_fn):
+        """
+        hidden_channels: list of int, in_ch: int, out_ch: int
+        block_fn: function(in_dim, out_dim) -> nn.Module
+        """
+        layers = []
+        last = in_ch
+        for ch in hidden_channels:
+            layers.append(block_fn(last, ch))
+            last = ch
+        layers.append(block_fn(last, out_ch))
+        return nn.Sequential(*layers)
 
-        encoder.append(
-            torch.nn.Sequential(
-                #torch.nn.Linear(last_channel, latent_channel * 2),
-                #torch.nn.BatchNorm1d(latent_channel * 2),
-                #torch.nn.LeakyReLU(),
-                torch.nn.Linear(last_channel, latent_channel * 2),
-            )
+    def make_encoder_mlp_1d(self, hidden_channels, in_channel, latent_channel):
+        # MLP 인코더: Linear + BN + LeakyReLU 블록을 생성
+        return self._build_mlp(
+            hidden_channels,
+            in_channel,
+            latent_channel * 2,
+            lambda in_dim, out_dim: nn.Sequential(
+                nn.Linear(in_dim, out_dim),
+                nn.BatchNorm1d(out_dim),
+                nn.LeakyReLU(),
+            ),
         )
-        encoder = torch.nn.Sequential(*encoder)
-        return encoder
 
     def make_encoder_residual_mlp_1d(self, hidden_channels, in_channel, latent_channel):
-        last_channel = in_channel
-        encoder = []
-        for channel in hidden_channels:
-            encoder.append(
-                torch.nn.Sequential(
-                    module.ResidualMLPBlock(last_channel, channel),
-                )
-            )
-            last_channel = channel
-
-        encoder.append(
-            torch.nn.Sequential(
-                module.ResidualMLPBlock(last_channel, latent_channel * 2),
-            )
+        # Residual MLP 블록 기반 인코더 생성
+        return self._build_mlp(
+            hidden_channels,
+            in_channel,
+            latent_channel * 2,
+            lambda in_dim, out_dim: module.ResidualMLPBlock(in_dim, out_dim),
         )
-        encoder = torch.nn.Sequential(*encoder)
-        return encoder
     
     def make_encoder_mlp_2d(self, hidden_channels, in_channel, latent_channel):
         last_channel = in_channel
@@ -395,28 +389,24 @@ class FlexibleVAE(VAE):
 
     def forward(self, input, latent_rand_sampling=True, L=1): # L: number of samples for MC
         mu, log_var = self.encode(input)
-
+        # 샘플 z 생성
         if latent_rand_sampling:
-            # [L, B, D] 형태로 한번에 랜덤 샘플 생성
             eps = torch.randn(L, *mu.shape, device=mu.device)
             input_z_stack = mu.unsqueeze(0) + eps * torch.exp(log_var * 0.5).unsqueeze(0)
         else:
             input_z_stack = mu.unsqueeze(0)
-
-        # [L, B, D] -> [L*B, D] 형태로 변환하여 한번에 디코딩
+        # Flatten for single decode call
         B = input.shape[0]
-        input_z_flat = input_z_stack.view(-1, input_z_stack.shape[-1])
-        recon_flat = self.decode(input_z_flat)
+        z_flat = input_z_stack.view(-1, input_z_stack.shape[-1])  # [L*B, D]
+        recon_flat = self.decode(z_flat)
+        # Latent reconstruction용 입력: detach recon_flat
+        z_recon_flat, _ = self.encode(recon_flat.detach())
+        # Reshape back
         recon_stack = recon_flat.view(L, B, *recon_flat.shape[1:])
-
-        # [L*B, D] -> [L, B, D] 형태로 변환하여 한번에 인코딩
-        recon_flat_for_lr = self.decode(input_z_flat.detach()) # 첫 encoder에 영향을 주지 않기 위해서 detach
-        z_recon_flat, _ = self.encode(recon_flat_for_lr)
         z_recon_stack = z_recon_flat.view(L, B, *z_recon_flat.shape[1:])
-
-        #z_for_lr_stack = input_z_flat.detach().view(L, B, *input_z_flat.shape[1:]) # reshape to match z_recon_stack
-
-        return recon_stack.mean(dim=0), mu, log_var, input_z_stack, z_recon_stack # recon은 평균값을 취하고 z에 대해서는 각각 계산
+        # 최종 recon은 L 차원 평균
+        recon = recon_stack.mean(dim=0)
+        return recon, mu, log_var, input_z_stack, z_recon_stack
 
 
     def forward_regacy(self, input, latent_recon=True, latent_rand_sampling=True, L=1):

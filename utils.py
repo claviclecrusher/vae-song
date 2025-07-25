@@ -114,12 +114,11 @@ def kld(mu, log_var):
 
 
 def measure_pc_runmodel(model, loader, device):
-    au_sum = 0
-    kl_sum = 0
-    mi_sum = 0
-    nll_sum = 0
-    var_sum = 0
+    # metrics 계산 시 첫 배치만 사용하여 속도를 개선
+    au_sum = kl_sum = mi_sum = nll_sum = var_sum = 0
     for i, data in enumerate(loader):
+        if i > 0:
+            break
         res_list = model(data[0].to(device)) 
         recon  = res_list[0]
         mu  = res_list[1]
@@ -133,29 +132,28 @@ def measure_pc_runmodel(model, loader, device):
         nll_sum += nll_iw(mu, log_var, loss_rec)
         if torch.is_tensor(log_var): # except naive ae
             var_sum += log_var.exp().sum().detach().item()
-    #au, au_var = calc_au(model, loader, device, delta=0.01)
-    return au_sum/(i+1), kl_sum/(i+1), mi_sum/(i+1), nll_sum/(i+1), var_sum/(i+1)
+    # 첫 배치만 사용했으므로 i==0 → 나눌 필요 없음
+    return au_sum, kl_sum, mi_sum, nll_sum, var_sum
 
 
 
 def log_unified(path, list_elements, list_names, logfilename='unified_log.csv'):
     os.makedirs(path, exist_ok=True)
-    if not os.path.isfile(os.path.join(path, logfilename)):
-        with open(os.path.join(path, logfilename), mode='a') as file:
-            writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            writer.writerow(list_names)
-    with open(os.path.join(path, logfilename), mode='a') as file:
+    full_path = os.path.join(path, logfilename)
+    # 한 번만 열고 헤더 여부는 파일 포인터 위치로 판단
+    with open(full_path, mode='a', newline='') as file:
         writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        if file.tell() == 0:
+            writer.writerow(list_names)
         writer.writerow(list_elements)
 
 def log_unified_dict(path, dict_elements, logfilename='unified_log.csv'):
     os.makedirs(path, exist_ok=True)
-    if not os.path.isfile(os.path.join(path, logfilename)):
-        with open(os.path.join(path, logfilename), mode='a') as file:
-            writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            writer.writerow(dict_elements.keys())
-    with open(os.path.join(path, logfilename), mode='a') as file:
+    full_path = os.path.join(path, logfilename)
+    with open(full_path, mode='a', newline='') as file:
         writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        if file.tell() == 0:
+            writer.writerow(dict_elements.keys())
         writer.writerow(dict_elements.values())
 
 

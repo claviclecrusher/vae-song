@@ -11,6 +11,16 @@ from utils import pca_visualization
 import utils
 import dataset
 import yaml
+import random
+import numpy as np
+
+# 재현성을 위한 시드 고정
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
@@ -101,6 +111,8 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
     return loss_total / len(loader_test), loss_recon_total / len(loader_test), loss_reg_total / len(loader_test), loss_lr_total / len(loader_test)
 
 def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None, num_mc_samples=1):
+    # 데이터 타입 기본값 설정 (2d: 이미지), 필요 시 덮어쓰기
+    data_type = '2d'
     
     train_dataset, test_dataset = dataset.load_dataset(dataset_name)
 
@@ -146,8 +158,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         name += "_il=" + str(float(model.il_factor))
 
     writer = SummaryWriter(log_dir="runs/" + name)    
-    os.makedirs("./results/"+resultname+"/" + name + "/params/", exist_ok=True)
-    os.makedirs("./results/"+resultname+"/" + name + "/params/", exist_ok=True)
+    os.makedirs(f"./results/{resultname}/{name}/params/", exist_ok=True)
 
     # Main train loop
     for epoch in tqdm(range(epochs), desc=name):
@@ -194,7 +205,8 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         visualize, save_img = (True, True) if (epoch == (epochs-1)) else (False, False)
         loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, save_img=save_img, visualize=visualize, data_type=data_type)
 
-        writer.add_scalar("loss/test", loss_total / len(loader_test), epoch)
+        # eval() 반환은 이미 배치 평균이므로, 추가 나눗셈 없이 그대로 기록
+        writer.add_scalar("loss/test", loss_total, epoch)
         if epoch == (epochs-1):
             torch.save(
                 model.state_dict(), "./results/" + resultname + "/" + name + "/params/model_" + str(epoch) + ".pt"

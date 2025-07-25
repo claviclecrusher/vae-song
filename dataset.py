@@ -19,27 +19,23 @@ class ChessboardDataset(Dataset):
 
     @staticmethod
     def generate_chessboard_data(n_data, chessboard_size=4):
-        features = np.zeros((n_data, 2))
-        labels = np.zeros((n_data,))
-        
-        # 각 데이터 포인트에 대해
-        for i in range(n_data):
-            while True:
-                # 0-1 사이의 랜덤한 x, y 좌표 생성
-                x = np.random.random()
-                y = np.random.random()
-                
-                # 해당 좌표가 속한 체스보드 칸 계산
-                grid_x = int(x * chessboard_size)
-                grid_y = int(y * chessboard_size)
-                
-                # 검은색 칸인지 확인 (grid_x + grid_y가 홀수인 경우가 검은색 칸)
-                if (grid_x + grid_y) % 2 == 1:
-                    features[i] = [x, y]
-                    labels[i] = grid_x + grid_y * chessboard_size  # 칸 번호 할당
-                    break
-        
-        return features, labels
+        # vectorized sampling: generate candidates and filter by chessboard mask
+        factor = 2
+        num_samples = int(n_data * factor)
+        X = np.random.rand(num_samples, 2)
+        grid = (X * chessboard_size).astype(int)
+        mask = ((grid[:, 0] + grid[:, 1]) % 2 == 1)
+        X_sel = X[mask]
+        # 부족하면 추가 샘플링
+        while X_sel.shape[0] < n_data:
+            extra = np.random.rand(n_data, 2)
+            grid_e = (extra * chessboard_size).astype(int)
+            mask_e = ((grid_e[:, 0] + grid_e[:, 1]) % 2 == 1)
+            X_sel = np.vstack([X_sel, extra[mask_e]])
+        X_sel = X_sel[:n_data]
+        grid_sel = (X_sel * chessboard_size).astype(int)
+        labels = (grid_sel[:, 0] + grid_sel[:, 1] * chessboard_size).astype(np.float32)
+        return X_sel.astype(np.float32), labels
 
 
 class PinwheelDataset(Dataset):
@@ -138,15 +134,16 @@ class PinwheelDataset(Dataset):
 
 def load_dataset(dataset_name):
     if dataset_name == 'mnist':
-        transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.RandomRotation(20),
-                torchvision.transforms.RandomResizedCrop((28, 28), (0.9, 1), (0.9, 1.1)),
-                torchvision.transforms.ToTensor(),
-            ]
-        )
-        train_dataset = torchvision.datasets.MNIST(root="dataset/", transform=transforms, download=True)
-        test_dataset = torchvision.datasets.MNIST(root="dataset/", transform=transforms, train=False)
+        train_transform = torchvision.transforms.Compose([
+            torchvision.transforms.RandomRotation(20),
+            torchvision.transforms.RandomResizedCrop((28, 28), (0.9, 1), (0.9, 1.1)),
+            torchvision.transforms.ToTensor(),
+        ])
+        test_transform = torchvision.transforms.Compose([
+            torchvision.transforms.ToTensor(),
+        ])
+        train_dataset = torchvision.datasets.MNIST(root="dataset/", transform=train_transform, download=True)
+        test_dataset = torchvision.datasets.MNIST(root="dataset/", transform=test_transform, train=False)
     elif dataset_name == 'celeba':
         transforms = torchvision.transforms.Compose(
             [
