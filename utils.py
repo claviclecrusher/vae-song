@@ -476,3 +476,63 @@ def visualize_flows(input, mu, z, output, resultname, name, epoch, num_flows=8):
     os.makedirs(f"./results/{resultname}/{name}/visualize_flows/", exist_ok=True)
     plt.savefig(f"./results/{resultname}/{name}/visualize_flows/{epoch}_flows.png")
     plt.close()
+
+# --- run_alpha_experiment 지원 함수들 ---
+def compute_local_reg(model, loader, K):
+    """
+    각 그리드 셀(cell)별 VAE 정규화(KL*beta) 항의 평균값을 계산하여 numpy 배열로 반환합니다.
+    """
+    import numpy as _np
+    import torch as _torch
+
+    device = next(model.parameters()).device
+    model.eval()
+    regs = []
+    with _torch.no_grad():
+        dataset = loader.dataset
+        X_all = dataset.X
+        y_all = dataset.y
+        for cell in range(K * K):
+            mask = (y_all == cell)
+            if mask.sum() == 0:
+                regs.append(0.0)
+                continue
+            X_cell = X_all[mask].to(device)
+            recon, mu, log_var, z_input, z_recon = model(X_cell)
+            _, _, loss_reg_term, _ = model.loss(X_cell, recon, mu, log_var, z_input, z_recon)
+            regs.append(loss_reg_term.item() / X_cell.size(0))
+    return _np.array(regs)
+
+def estimate_local_lipschitz(func, X, num_pairs=100):
+    """
+    주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정합니다.
+    """
+    import torch as _torch
+    if X.size(0) < 2:
+        return 0.0
+    with _torch.no_grad():
+        N = X.size(0)
+        idx1 = _torch.randint(0, N, (num_pairs,), device=X.device)
+        idx2 = _torch.randint(0, N, (num_pairs,), device=X.device)
+        x1 = X[idx1]
+        x2 = X[idx2]
+        y1 = func(x1)
+        y2 = func(x2)
+        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1)
+        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1).clamp(min=1e-8)
+        lip = (diff_y / diff_x).max().item()
+    return lip
+
+def plot_heatmap(vals, K, title, filepath, cmap='viridis'):
+    """
+    1D 배열(vals)을 KxK 매트릭스로 재구성해 heatmap을 그려 파일에 저장합니다.
+    """
+    import numpy as _np
+    arr = _np.array(vals).reshape(K, K)
+    plt.figure()
+    plt.imshow(arr, cmap=cmap, origin='lower')
+    plt.colorbar()
+    plt.title(title)
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    plt.savefig(filepath)
+    plt.close()
