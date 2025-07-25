@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
-
+from tqdm import tqdm
 from dataset import GridMixtureDataset
 from model import LRVAE
 from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap
@@ -13,7 +13,7 @@ from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap
 def train_model(model, loader, epochs, lr, device):
     model.to(device).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    for _ in range(epochs):
+    for _ in tqdm(range(epochs)):
         for X, _ in loader:
             X = X.to(device)
             optimizer.zero_grad()
@@ -27,7 +27,7 @@ def train_model(model, loader, epochs, lr, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--alphas', nargs='+', type=float, required=True)
-    parser.add_argument('--K', type=int, default=4)
+    parser.add_argument('--K', type=int, default=16)
     parser.add_argument('--N0', type=int, default=500)
     parser.add_argument('--std', type=float, default=0.1)
     parser.add_argument('--epochs', type=int, default=50)
