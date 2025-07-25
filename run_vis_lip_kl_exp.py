@@ -83,21 +83,10 @@ def main():
         dataset = GridMixtureDataset(args.K, args.N0, std=args.std, L=1.0)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-    # Training data distribution visualization (grayscale heatmap with actual data points)
-    counts = np.bincount(dataset.y.cpu().numpy(), minlength=dataset.K * dataset.K)
-    arr = counts.reshape(dataset.K, dataset.K)
-    plt.figure()
-    # heatmap with continuous extent and blocky cells, 반투명 배경
-    extent = [0, dataset.L, 0, dataset.L]
-    plt.imshow(arr, cmap='gray', origin='lower', extent=extent,
-               interpolation='nearest', alpha=0.5)
-    plt.colorbar()
-    plt.title('Training Data Distribution')
-    # actual data points overlay (less 크고 투명하게)
-    X = dataset.X.cpu().numpy()
-    plt.scatter(X[:, 0], X[:, 1], c='red', s=1, alpha=0.3)
-    plt.savefig(os.path.join(args.output_dir, 'train_distribution.png'))
-    plt.close()
+    # Training data distribution visualization (grid heatmap)
+    counts = np.bincount(dataset.y.cpu().numpy(), minlength=args.K * args.K)
+    plot_heatmap(counts, args.K, 'Training Data Distribution',
+                 os.path.join(args.output_dir, 'train_distribution.png'))
 
     # Test dataset (uniform)
     test_N0 = args.test_N0 if args.test_N0 is not None else args.N0
