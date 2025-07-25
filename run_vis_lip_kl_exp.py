@@ -27,7 +27,7 @@ def train_model(model, loader, epochs, lr, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--alphas', nargs='+', type=float, required=True)
-    parser.add_argument('--K', type=int, default=16)
+    parser.add_argument('--K', type=int, default=8)
     parser.add_argument('--N0', type=int, default=500)
     parser.add_argument('--std', type=float, default=0.1)
     parser.add_argument('--epochs', type=int, default=50)
@@ -41,6 +41,7 @@ def main():
     parser.add_argument('--test_N0', type=int, default=None, help='테스트용 셀당 샘플 개수')
     parser.add_argument('--auto_weights', action='store_true', help='훈련용 가중치를 자동으로 생성 (불균일)')
     parser.add_argument('--seed', type=int, default=None, help='auto_weights seed')
+    parser.add_argument('--grid_model', action='store_true', help='Use deeper network architecture for grid data')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -76,7 +77,12 @@ def main():
     records = []
     for alpha in args.alphas:
         print(f"Running experiment for alpha = {alpha}")
-        model = LRVAE(alpha=alpha, dataset='pinwheel', hidden_channels=None)
+        # choose hidden_channels: deeper network for grid if requested
+        hidden = None
+        if args.grid_model:
+            # deeper MLP channels for grid data
+            hidden = [64, 128, 256, 512, 256, 128, 64]
+        model = LRVAE(alpha=alpha, dataset='pinwheel', hidden_channels=hidden)
         model.beta = args.beta
         model.alpha = alpha
         model.wu_alpha = 1.0
