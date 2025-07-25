@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from dataset import GridMixtureDataset
+from dataset import GridMixtureDataset, WeightedGridMixtureDataset
 from model import LRVAE
 from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap
 
@@ -36,12 +36,28 @@ def main():
     parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--output_dir', type=str, default='results/alpha_exp')
+    parser.add_argument('--train_weights', nargs='+', type=float, default=None, help='훈련용 셀별 가중치 (길이 K*K)')
+    parser.add_argument('--train_total', type=int, default=None, help='훈련용 전체 샘플 수')
+    parser.add_argument('--test_N0', type=int, default=None, help='테스트용 셀당 샘플 개수')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    dataset = GridMixtureDataset(args.K, args.N0, std=args.std, L=1.0)
+    if args.train_weights is not None:
+        assert args.train_total is not None, '--train_total must be specified when using --train_weights'
+        dataset = WeightedGridMixtureDataset(args.K, args.train_weights, args.train_total, std=args.std, L=1.0)
+    else:
+        dataset = GridMixtureDataset(args.K, args.N0, std=args.std, L=1.0)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+
+    # Training data distribution visualization
+    counts = np.bincount(dataset.y.cpu().numpy(), minlength=args.K * args.K)
+    plot_heatmap(counts, args.K, 'Training Data Distribution', os.path.join(args.output_dir, 'train_distribution.png'))
+
+    # Test dataset (uniform)
+    test_N0 = args.test_N0 if args.test_N0 is not None else args.N0
+    test_dataset = GridMixtureDataset(args.K, test_N0, std=args.std, L=1.0)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
 
     records = []
@@ -54,12 +70,12 @@ def main():
 
         train_model(model, loader, args.epochs, args.lr, device)
 
-        test_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
+        # Local metrics on uniform test data
         reg_vals = compute_local_reg(model, test_loader, args.K)
 
         lips_vals = []
         for cell in range(args.K * args.K):
-            X_cell = dataset.X[dataset.y == cell].to(device)
+            X_cell = test_dataset.X[test_dataset.y == cell].to(device)
             lips = estimate_local_lipschitz(model.decode, X_cell, num_pairs=100)
             lips_vals.append(lips)
 

@@ -167,6 +167,50 @@ class GridMixtureDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
+# --- 훈련용 불균일 그리드 혼합 데이터셋 클래스 추가 ---
+class WeightedGridMixtureDataset(Dataset):
+    """
+    KxK 그리드셀에 가중치(weights)만큼 샘플을 배분하여 총 total_samples개를 생성
+    Args:
+        K (int): 그리드 차원 수
+        weights (list[float]): 길이 K*K, 각 셀별 샘플 비율(합 1.0)
+        total_samples (int): 전체 샘플 수
+        std (float): 가우시안 표준편차
+        L (float): 그리드 범위
+    """
+    def __init__(self, K, weights, total_samples, std=0.1, L=1.0):
+        assert len(weights) == K*K, "weights 길이는 K*K여야 합니다"
+        w = np.array(weights, dtype=np.float32)
+        w = w / w.sum()
+        # 그리드 중심 좌표
+        centers_x = np.linspace(0, L, K)
+        centers_y = np.linspace(0, L, K)
+        cell_centers = [(x, y) for x in centers_x for y in centers_y]
+
+        # 셀 인덱스 샘플링
+        cell_ids = np.random.choice(K*K, size=total_samples, p=w)
+        points = []
+        labels = []
+        for idx in range(K*K):
+            cnt = int((cell_ids == idx).sum())
+            if cnt == 0:
+                continue
+            cx, cy = cell_centers[idx]
+            pts = np.random.randn(cnt, 2) * std + np.array([cx, cy])
+            points.append(pts)
+            labels.append(np.full(cnt, idx))
+        X = np.vstack(points).astype(np.float32)
+        y = np.concatenate(labels).astype(np.int64)
+        # 텐서화하여 속성으로 저장
+        self.X = torch.from_numpy(X)
+        self.y = torch.from_numpy(y)
+
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
 
 def load_dataset(dataset_name):
     if dataset_name == 'mnist':
