@@ -53,9 +53,10 @@ def main():
         if args.train_weights is not None:
             train_weights = args.train_weights
         else:
+            # sparse한 불균일 분포 생성을 위해 exponential 분포 사용
             if args.seed is not None:
                 np.random.seed(args.seed)
-            w = np.random.rand(args.K * args.K)
+            w = np.random.exponential(scale=1.0, size=(args.K * args.K,))
             w = w / w.sum()
             train_weights = w.tolist()
         # total 샘플 수 결정
@@ -69,14 +70,15 @@ def main():
     counts = np.bincount(dataset.y.cpu().numpy(), minlength=dataset.K * dataset.K)
     arr = counts.reshape(dataset.K, dataset.K)
     plt.figure()
-    # heatmap with continuous extent based on dataset.L
+    # heatmap with continuous extent and blocky cells, 반투명 배경
     extent = [0, dataset.L, 0, dataset.L]
-    plt.imshow(arr, cmap='gray', origin='lower', extent=extent, interpolation='nearest')
+    plt.imshow(arr, cmap='gray', origin='lower', extent=extent,
+               interpolation='nearest', alpha=0.5)
     plt.colorbar()
     plt.title('Training Data Distribution')
-    # actual data points overlay
+    # actual data points overlay (less 크고 투명하게)
     X = dataset.X.cpu().numpy()
-    plt.scatter(X[:, 0], X[:, 1], c='red', s=2, alpha=0.6)
+    plt.scatter(X[:, 0], X[:, 1], c='red', s=1, alpha=0.3)
     plt.savefig(os.path.join(args.output_dir, 'train_distribution.png'))
     plt.close()
 
