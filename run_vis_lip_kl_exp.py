@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 from dataset import GridMixtureDataset, WeightedGridMixtureDataset
 from model import LRVAE
 from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap
@@ -27,7 +28,7 @@ def train_model(model, loader, epochs, lr, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--alphas', nargs='+', type=float, required=True)
-    parser.add_argument('--K', type=int, default=8)
+    parser.add_argument('--K', type=int, default=16)
     parser.add_argument('--N0', type=int, default=500)
     parser.add_argument('--std', type=float, default=0.1)
     parser.add_argument('--epochs', type=int, default=50)
@@ -64,9 +65,21 @@ def main():
         dataset = GridMixtureDataset(args.K, args.N0, std=args.std, L=1.0)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-    # Training data distribution visualization
+    # Training data distribution visualization (grayscale heatmap + red dots)
     counts = np.bincount(dataset.y.cpu().numpy(), minlength=args.K * args.K)
-    plot_heatmap(counts, args.K, 'Training Data Distribution', os.path.join(args.output_dir, 'train_distribution.png'))
+    # heatmap 그레이스케일
+    arr = counts.reshape(args.K, args.K)
+    plt.figure()
+    plt.imshow(arr, cmap='gray', origin='lower')
+    plt.colorbar()
+    plt.title('Training Data Distribution')
+    # 실제 샘플 포인트 표시 (cell index 기준)
+    cell_idxs = dataset.y.cpu().numpy()
+    xs = cell_idxs % args.K
+    ys = cell_idxs // args.K
+    plt.scatter(xs, ys, c='red', s=2, alpha=0.6)
+    plt.savefig(os.path.join(args.output_dir, 'train_distribution.png'))
+    plt.close()
 
     # Test dataset (uniform)
     test_N0 = args.test_N0 if args.test_N0 is not None else args.N0
@@ -98,8 +111,10 @@ def main():
             lips = estimate_local_lipschitz(model.decode, X_cell, num_pairs=100)
             lips_vals.append(lips)
 
+        # KL Reg heatmap (기존 컬러맵 유지)
         plot_heatmap(reg_vals, args.K, f"KL Reg (alpha={alpha})", os.path.join(args.output_dir, f"reg_alpha_{alpha}.png"))
-        plot_heatmap(np.array(lips_vals), args.K, f"Local Lipschitz (alpha={alpha})", os.path.join(args.output_dir, f"lips_alpha_{alpha}.png"))
+        # Local Lipschitz heatmap (red 계열)
+        plot_heatmap(np.array(lips_vals), args.K, f"Local Lipschitz (alpha={alpha})", os.path.join(args.output_dir, f"lips_alpha_{alpha}.png"), cmap='Reds')
 
         for cell, (r, l) in enumerate(zip(reg_vals, lips_vals)):
             records.append({'alpha': alpha, 'cell': cell, 'reg': float(r), 'lips': float(l)})
