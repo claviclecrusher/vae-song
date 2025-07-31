@@ -32,7 +32,25 @@ python main.py
 To run with a different configuration file:
 ```bash
 python main.py --config configs/config_vae.yaml
-python run_alpha_experiment.py --alphas 0.5 0.1
+python run_vis_lip_kl_exp.py \
+    --alpha 0.0 \
+    --K 8 \
+    --std 0.3 \
+    --epochs 100 \
+    --lr 1e-3 \
+    --beta 0.001 \
+    --batch_size 256 \
+    --output_dir results/kl_lips_x_z_space_exp \
+    --train_total_samples 20000 \
+    --test_total_samples 10000 \
+    --distribution_pattern corner_heavy \
+    --latent_dim 2 \
+    --hidden_channels 128 64 64 32 16 8 4 2 \
+    --num_training_components 8 \
+    --seed 20 \
+    --K_z 16 \
+    --z_min -3.0 \
+    --z_max 3.0
 ```
 Experiment logs will be saved under `runs/` for TensorBoard and `results/` for images and model checkpoints.
 

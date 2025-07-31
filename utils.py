@@ -482,7 +482,6 @@ def compute_local_reg(model, loader, K):
     """
     각 그리드 셀(cell)별 VAE 정규화(KL*beta) 항의 평균값을 계산하여 numpy 배열로 반환합니다.
     """
-    import numpy as _np
     import torch as _torch
 
     device = next(model.parameters()).device
@@ -501,38 +500,113 @@ def compute_local_reg(model, loader, K):
             recon, mu, log_var, z_input, z_recon = model(X_cell)
             _, _, loss_reg_term, _ = model.loss(X_cell, recon, mu, log_var, z_input, z_recon)
             regs.append(loss_reg_term.item() / X_cell.size(0))
-    return _np.array(regs)
+    return np.array(regs)
 
-def estimate_local_lipschitz(func, X, num_pairs=100):
+def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz', metric=2):
     """
     주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정합니다.
     """
-    import torch as _torch
     if X.size(0) < 2:
         return 0.0
-    with _torch.no_grad():
+    with torch.no_grad():
         N = X.size(0)
-        idx1 = _torch.randint(0, N, (num_pairs,), device=X.device)
-        idx2 = _torch.randint(0, N, (num_pairs,), device=X.device)
+        idx1 = torch.randint(0, N, (num_pairs,), device=X.device)
+        idx2 = torch.randint(0, N, (num_pairs,), device=X.device)
         x1 = X[idx1]
         x2 = X[idx2]
         y1 = func(x1)
         y2 = func(x2)
-        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1)
-        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1).clamp(min=1e-8)
-        lip = (diff_y / diff_x).max().item()
-    return lip
+        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric)
+        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8)
 
-def plot_heatmap(vals, K, title, filepath, cmap='viridis'):
+        if measure == 'inverse_lipschitz':
+            inv_lip = (diff_y / diff_x).max().item()
+            return inv_lip
+        elif measure == 'lipschitz':
+            lip = (diff_y / diff_x).min().item()
+            return lip
+        elif measure == 'bi_lipschitz':
+            inv_lip = (diff_y / diff_x).max().item()
+            lip = (diff_y / diff_x).min().item()
+            if lip < 1e-8:
+                return float('inf')
+            return lip, inv_lip
+        else:
+            raise ValueError(f"지원하지 않는 measure: {measure}")
+
+def plot_heatmap(vals, K, title, filepath, cmap='viridis', extent=None): # extent 인자 추가
     """
     1D 배열(vals)을 KxK 매트릭스로 재구성해 heatmap을 그려 파일에 저장합니다.
+    
+    Args:
+        vals (np.ndarray): KL Divergence 또는 Lipschitz 값을 담은 1D 배열.
+        K (int): 그리드의 한 변 길이. (KxK)
+        title (str): 그래프 제목.
+        filepath (str): 저장할 파일 경로.
+        cmap (str): 컬러맵.
+        extent (list, optional): (xmin, xmax, ymin, ymax) 형식의 데이터 좌표 범위.
+                                 이것이 지정되면, 그리드 셀이 이 좌표 범위에 매핑됩니다.
     """
     import numpy as _np
+    import matplotlib.pyplot as _plt
+    import os
+
     arr = _np.array(vals).reshape(K, K)
-    plt.figure()
-    plt.imshow(arr, cmap=cmap, origin='lower')
-    plt.colorbar()
-    plt.title(title)
+    _plt.figure(figsize=(8, 6))
+    _plt.imshow(arr, cmap=cmap, origin='lower', extent=extent) # extent 인자 사용
+    _plt.colorbar(label='Value') # 한글 제거
+    _plt.title(title)
+    
+    # extent가 제공되면 Z-space 축 라벨 사용, 아니면 X-space 축 라벨 사용
+    _plt.xlabel('Z-Dim 1' if extent is not None else 'X-coordinate') 
+    _plt.ylabel('Z-Dim 2' if extent is not None else 'Y-coordinate') 
+
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    plt.savefig(filepath)
-    plt.close()
+    _plt.savefig(filepath)
+    _plt.close()
+
+def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histogram.png', cmap='viridis', xlim=None, ylim=None):
+    """
+    2D 데이터 포인트들을 히스토그램으로 시각화합니다.
+    
+    Args:
+        X (np.ndarray): shape (N, 2)의 2D 데이터 포인트들
+        bins (int): 히스토그램 bin 개수
+        title (str): 그래프 제목
+        filepath (str): 저장할 파일 경로
+        cmap (str): 컬러맵
+        xlim (tuple, optional): x축의 최소/최대 범위 (min, max)
+        ylim (tuple): y축의 최소/최대 범위 (min, max)
+    Returns:
+        tuple: (actual_xmin, actual_xmax, actual_ymin, actual_ymax) 실제 플롯된 축 범위.
+               xlim/ylim이 지정된 경우 해당 범위가 반환됩니다.
+    """
+    import numpy as _np
+    import matplotlib.pyplot as _plt
+    import os
+
+    _plt.figure(figsize=(8, 6))
+    
+    # hist2d는 (counts, xedges, yedges, image)를 반환합니다.
+    _, xedges, yedges, _ = _plt.hist2d(X[:, 0], X[:, 1], bins=bins, cmap=cmap)
+    
+    _plt.colorbar(label='Data Density')
+    _plt.title(title)
+    _plt.xlabel('X-coordinate')
+    _plt.ylabel('Y-coordinate')
+    
+    actual_xmin, actual_xmax = xedges[0], xedges[-1]
+    actual_ymin, actual_ymax = yedges[0], yedges[-1]
+
+    if xlim is not None:
+        _plt.xlim(xlim)
+        actual_xmin, actual_xmax = xlim
+    if ylim is not None:
+        _plt.ylim(ylim)
+        actual_ymin, actual_ymax = ylim
+
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    _plt.savefig(filepath)
+    _plt.close()
+
+    return (actual_xmin, actual_xmax, actual_ymin, actual_ymax) # 실제 범위 반환
