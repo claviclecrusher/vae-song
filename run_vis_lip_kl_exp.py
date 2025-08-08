@@ -248,7 +248,7 @@ def main():
     model.alpha = args.alpha
     model.wu_alpha = args.alpha 
 
-    cell_kl_vals_x, cell_lips_vals_x, cell_inv_lips_vals_x = _get_kl_and_lipschitz_for_x_cells(model, test_dataset_x, args.K, args.device)
+    cell_kl_vals_x, cell_lips_vals_x, cell_inv_lips_vals_x, cell_bi_lips_vals_x = _get_kl_and_lipschitz_for_x_cells(model, test_dataset_x, args.K, args.device)
 
     plot_heatmap(cell_kl_vals_x, args.K, f"KL Div (X-space, alpha={args.alpha})",
                  os.path.join(args.output_dir, f"kl_div_x_space_alpha_{args.alpha}.png"), cmap='viridis')
@@ -258,6 +258,9 @@ def main():
 
     plot_heatmap(cell_inv_lips_vals_x, args.K, f"Local inverse Lipschitz (X-space, alpha={args.alpha})",
                  os.path.join(args.output_dir, f"inv_lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
+
+    plot_heatmap(cell_bi_lips_vals_x, args.K, f"Local bi-Lipschitz (X-space, alpha={args.alpha})",
+                 os.path.join(args.output_dir, f"bi_lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
 
     # 5. KL and Decoder Bi-Lipschitz Visualization (Z-space based)
     cell_kl_vals_z, cell_lips_vals_z, cell_inv_lips_vals_z, cell_bi_lips_vals_z = _get_kl_and_lipschitz_for_z_cells(
