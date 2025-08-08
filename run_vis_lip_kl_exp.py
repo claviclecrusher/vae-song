@@ -38,7 +38,7 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
     kl_vals = np.full(K * K, empty_cell_fill_value, dtype=np.float32)
     lips_vals = np.full(K * K, empty_cell_fill_value, dtype=np.float32)
     inv_lips_vals = np.full(K * K, empty_cell_fill_value, dtype=np.float32)
-
+    bi_lips_vals = np.full(K * K, empty_cell_fill_value, dtype=np.float32)
     model.eval()
     with torch.no_grad():
         for cell_idx in range(K * K):
@@ -57,10 +57,12 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
             z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z).view(-1, mu_cell.size(-1))
             lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, measure='lipschitz')
             inv_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, measure='inverse_lipschitz')
+            bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, measure='bi_lipschitz')
             lips_vals[cell_idx] = lips
             inv_lips_vals[cell_idx] = inv_lips
+            bi_lips_vals[cell_idx] = bi_lips
             
-    return kl_vals, lips_vals, inv_lips_vals
+    return kl_vals, lips_vals, inv_lips_vals, bi_lips_vals
 
 # Calculate KL and Lipschitz for each grid cell (Z-space)
 def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_dim, device, nsamples_z_per_cell=100, num_pairs_lips=100, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE):
@@ -72,6 +74,7 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
     kl_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
     lips_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
     inv_lips_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
+    bi_lips_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
     
     model.eval()
     with torch.no_grad():
@@ -103,10 +106,12 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
                 continue
             lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, measure='lipschitz')
             inv_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, measure='inverse_lipschitz')
+            bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, measure='bi_lipschitz')
             lips_vals_z[cell_idx] = lips
             inv_lips_vals_z[cell_idx] = inv_lips
+            bi_lips_vals_z[cell_idx] = bi_lips
             
-    return kl_vals_z, lips_vals_z, inv_lips_vals_z
+    return kl_vals_z, lips_vals_z, inv_lips_vals_z, bi_lips_vals_z
 
 
 def main():
@@ -255,7 +260,7 @@ def main():
                  os.path.join(args.output_dir, f"inv_lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
 
     # 5. KL and Decoder Bi-Lipschitz Visualization (Z-space based)
-    cell_kl_vals_z, cell_lips_vals_z, cell_inv_lips_vals_z = _get_kl_and_lipschitz_for_z_cells(
+    cell_kl_vals_z, cell_lips_vals_z, cell_inv_lips_vals_z, cell_bi_lips_vals_z = _get_kl_and_lipschitz_for_z_cells(
         model, args.K_z, args.z_min, args.z_max, actual_latent_dim, args.device,
         nsamples_z_per_cell=100, num_pairs_lips=100, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE
     )
@@ -271,6 +276,9 @@ def main():
 
         plot_heatmap(cell_inv_lips_vals_z, args.K_z, f"Local inverse Lipschitz (Z-space, alpha={args.alpha})",
                      os.path.join(args.output_dir, f"inv_lips_z_space_alpha_{args.alpha}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
+
+        plot_heatmap(cell_bi_lips_vals_z, args.K_z, f"Local bi-Lipschitz (Z-space, alpha={args.alpha})",
+                     os.path.join(args.output_dir, f"bi_lips_z_space_alpha_{args.alpha}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
     else:
         print(f"Z-space grid evaluation skipped as actual latent dimension is not 2D.")
 

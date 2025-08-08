@@ -504,7 +504,14 @@ def compute_local_reg(model, loader, K):
 
 def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz', metric=2):
     """
-    주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정합니다.
+    주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정.
+    1/L(z) <= A <= ||f(z) - f(z')|| / ||z - z'|| <= B <= L(z)
+
+    Args:
+        func (function): 추정할 함수.
+        X (torch.Tensor): 입력 데이터.
+        num_pairs (int): 랜덤 샘플 페어 개수.
+        measure (str): 측정 방법 ('inverse_lipschitz', 'lipschitz', 'bi_lipschitz').
     """
     if X.size(0) < 2:
         return 0.0
@@ -516,21 +523,22 @@ def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz'
         x2 = X[idx2]
         y1 = func(x1)
         y2 = func(x2)
-        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric)
-        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8)
+        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric) # ||f(z) - f(z')||
+        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8) # ||z - z'||
 
         if measure == 'inverse_lipschitz':
-            inv_lip = (diff_y / diff_x).max().item()
-            return inv_lip
+            B = (diff_y / diff_x).max().item()
+            return B
         elif measure == 'lipschitz':
-            lip = (diff_y / diff_x).min().item()
-            return lip
+            A = (diff_y / diff_x).min().item()
+            return 1/A
         elif measure == 'bi_lipschitz':
-            inv_lip = (diff_y / diff_x).max().item()
-            lip = (diff_y / diff_x).min().item()
-            if lip < 1e-8:
+            lip_ratio = (diff_y / diff_x)
+            A = lip_ratio.min().item()
+            B = lip_ratio.max().item()
+            if A < 1e-8:
                 return float('inf')
-            return lip, inv_lip
+            return torch.max(1/A, B)
         else:
             raise ValueError(f"지원하지 않는 measure: {measure}")
 
