@@ -526,10 +526,10 @@ def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz'
         diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric) # ||f(z) - f(z')||
         diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8) # ||z - z'||
 
-        if measure == 'inverse_lipschitz':
+        if measure == 'lipschitz':
             B = (diff_y / diff_x).max().item()
             return B
-        elif measure == 'lipschitz':
+        elif measure == 'inverse_lipschitz':
             A = (diff_y / diff_x).min().item()
             if A < 1e-8:
                 return float('inf')
@@ -542,7 +542,7 @@ def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz'
                 return float('inf')
             return torch.max(1/A, B).item()
         else:
-            raise ValueError(f"지원하지 않는 measure: {measure}")
+            raise ValueError(f"Unsupported measure: {measure}")
 
 def plot_heatmap(vals, K, title, filepath, cmap='viridis', extent=None): # extent 인자 추가
     """
