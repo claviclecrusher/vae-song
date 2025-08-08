@@ -531,7 +531,7 @@ def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz'
             return B
         elif measure == 'lipschitz':
             A = (diff_y / diff_x).min().item()
-            if A.item() < 1e-8:
+            if A < 1e-8:
                 return float('inf')
             return 1/A
         elif measure == 'bi_lipschitz':
