@@ -523,8 +523,10 @@ def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz'
         x2 = X[idx2]
         y1 = func(x1)
         y2 = func(x2)
-        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric) # ||f(z) - f(z')||
+        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8) # ||f(z) - f(z')||
         diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8) # ||z - z'||
+        # diff_x: clamp 로 0 나오면 A,B 값 자체가 무한대가 되는 것을 방지.
+        # diff_y: clamp 로 0 나오면 1/A 값이 무한대가 되는 것을 방지. (동등하게 처리해야 함.)
 
         if measure == 'lipschitz':
             B = (diff_y / diff_x).max().item()
