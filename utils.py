@@ -534,11 +534,11 @@ def estimate_local_lipschitz(func, X, num_pairs=100, measure='inverse_lipschitz'
             return 1/A
         elif measure == 'bi_lipschitz':
             lip_ratio = (diff_y / diff_x)
-            A = lip_ratio.min().item()
-            B = lip_ratio.max().item()
-            if A < 1e-8:
+            A = lip_ratio.min()
+            B = lip_ratio.max()
+            if A.item() < 1e-8:
                 return float('inf')
-            return torch.max(1/A, B)
+            return torch.max(1/A, B).item()
         else:
             raise ValueError(f"지원하지 않는 measure: {measure}")
 
