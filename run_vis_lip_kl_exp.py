@@ -104,9 +104,7 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             # --- Decoder Lipschitz Calculation (Z -> X_recon) ---
             if z_samples.size(0) < 2:
                 continue
-            lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, measure='lipschitz')
-            inv_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, measure='inverse_lipschitz')
-            bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, measure='bi_lipschitz')
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips)
             lips_vals_z[cell_idx] = lips
             inv_lips_vals_z[cell_idx] = inv_lips
             bi_lips_vals_z[cell_idx] = bi_lips
