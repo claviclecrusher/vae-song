@@ -55,9 +55,7 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
                 continue
 
             z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z).view(-1, mu_cell.size(-1))
-            lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, measure='lipschitz')
-            inv_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, measure='inverse_lipschitz')
-            bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, measure='bi_lipschitz')
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips)
             lips_vals[cell_idx] = lips
             inv_lips_vals[cell_idx] = inv_lips
             bi_lips_vals[cell_idx] = bi_lips
