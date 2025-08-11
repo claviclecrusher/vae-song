@@ -380,33 +380,44 @@ class FlexibleVAE(VAE):
     def encode(self, input):
         ret = self.encoder(input)
         #return ret.split(ret.shape[1] // 2, 1)
-        mu, var = ret.split(ret.shape[1] // 2, 1)
-        return mu, F.softplus(var) # prevent var from being negative
+        mu, log_var = ret.split(ret.shape[1] // 2, 1)
+        #return mu, F.softplus(var) # prevent var from being negative
+        return mu, log_var
 
     def decode(self, input):
         return self.decoder(input)
 
 
-    def forward(self, input, latent_rand_sampling=True, L=1): # L: number of samples for MC
+    def forward(self, input, latent_rand_sampling=True, L=1):  # L: number of samples for MC
         mu, log_var = self.encode(input)
-        # 샘플 z 생성
+
+        # 샘플 z 생성 (첫 인코더까지는 recon 용도로 경사 허용)
         if latent_rand_sampling:
             eps = torch.randn(L, *mu.shape, device=mu.device)
-            input_z_stack = mu.unsqueeze(0) + eps * torch.exp(log_var * 0.5).unsqueeze(0)
+            input_z_stack = mu.unsqueeze(0) + eps * torch.exp(log_var * 0.5).unsqueeze(0)  # [L, B, D]
         else:
             input_z_stack = mu.unsqueeze(0)
-        # Flatten for single decode call
+
         B = input.shape[0]
         z_flat = input_z_stack.view(-1, input_z_stack.shape[-1])  # [L*B, D]
-        recon_flat = self.decode(z_flat)
-        # Latent reconstruction용 입력: detach recon_flat
-        z_recon_flat, _ = self.encode(recon_flat.detach())
-        # Reshape back
-        recon_stack = recon_flat.view(L, B, *recon_flat.shape[1:])
-        z_recon_stack = z_recon_flat.view(L, B, *z_recon_flat.shape[1:])
-        # 최종 recon은 L 차원 평균
+
+        # 1) 재구성 경로: detach 없이 디코더로 → recon은 완전 연결 그래프 유지
+        recon_flat_attached = self.decode(z_flat)  # grad → decoder, encoder1(통해 z)
+
+        # 2) 잠재복원 경로: 첫 인코더 출력 z만 detach → grad는 decoder, encoder2로만
+        z_flat_detached = z_flat.detach()
+        recon_flat_lr = self.decode(z_flat_detached)             # grad → decoder
+        z_recon_flat_lr, _ = self.encode(recon_flat_lr)          # grad → encoder2
+
+        # 모양 되돌리기
+        recon_stack = recon_flat_attached.view(L, B, *recon_flat_attached.shape[1:])
+        z_recon_stack = z_recon_flat_lr.view(L, B, *z_recon_flat_lr.shape[1:])
         recon = recon_stack.mean(dim=0)
-        return recon, mu, log_var, input_z_stack, z_recon_stack
+
+        # latent recon 손실 경로로는 z를 detach 해서 돌려줌
+        input_z_stack_detached = input_z_stack.detach()
+
+        return recon, mu, log_var, input_z_stack_detached, z_recon_stack
 
 
     def forward_regacy(self, input, latent_recon=True, latent_rand_sampling=True, L=1):

@@ -502,7 +502,7 @@ def compute_local_reg(model, loader, K):
             regs.append(loss_reg_term.item() / X_cell.size(0))
     return np.array(regs)
 
-def estimate_local_lipschitz(func, X, num_pairs=100, metric=2):
+def estimate_local_lipschitz(func, X, num_pairs=100, metric=2, quantile=0.01):
     """
     주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정.
     1/L(z) <= A <= ||f(z) - f(z')|| / ||z - z'|| <= B <= L(z)
@@ -529,8 +529,8 @@ def estimate_local_lipschitz(func, X, num_pairs=100, metric=2):
         # diff_y: clamp 로 0 나오면 1/A 값이 무한대가 되는 것을 방지. (동등하게 처리해야 함.)
     
         lip_ratio = (diff_y / diff_x)
-        A = lip_ratio.min()
-        B = lip_ratio.max()
+        A = lip_ratio.quantile(quantile)
+        B = lip_ratio.quantile(1 - quantile)
         if A.item() < 1e-8:
             invA = float('inf')
         else:
