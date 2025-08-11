@@ -115,7 +115,7 @@ def main():
     parser.add_argument('--alpha', type=float, default=0.1, help='LRVAE alpha value (single value allowed).')
     parser.add_argument('--K', type=int, default=16, help='Grid size (KxK) for data generation and visualization in X-space.')
     parser.add_argument('--std', type=float, default=0.1, help='Standard deviation for Gaussian components in data generation.')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs.')
+    parser.add_argument('--epochs', type=int, default=1000, help='Number of training epochs.')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate for VAE training.')
     parser.add_argument('--beta', type=float, default=1.0, help='Beta for KL Divergence term in VAE loss.')
     parser.add_argument('--batch_size', type=int, default=256, help='Batch size for training and testing.')
