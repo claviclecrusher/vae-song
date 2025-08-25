@@ -482,12 +482,11 @@ def compute_local_reg(model, loader, K):
     """
     각 그리드 셀(cell)별 VAE 정규화(KL*beta) 항의 평균값을 계산하여 numpy 배열로 반환합니다.
     """
-    import torch as _torch
 
     device = next(model.parameters()).device
     model.eval()
     regs = []
-    with _torch.no_grad():
+    with torch.no_grad():
         dataset = loader.dataset
         X_all = dataset.X
         y_all = dataset.y
@@ -550,23 +549,20 @@ def plot_heatmap(vals, K, title, filepath, cmap='viridis', extent=None): # exten
         extent (list, optional): (xmin, xmax, ymin, ymax) 형식의 데이터 좌표 범위.
                                  이것이 지정되면, 그리드 셀이 이 좌표 범위에 매핑됩니다.
     """
-    import numpy as _np
-    import matplotlib.pyplot as _plt
-    import os
 
-    arr = _np.array(vals).reshape(K, K)
-    _plt.figure(figsize=(8, 6))
-    _plt.imshow(arr, cmap=cmap, origin='lower', extent=extent) # extent 인자 사용
-    _plt.colorbar(label='Value') # 한글 제거
-    _plt.title(title)
+    arr = np.array(vals).reshape(K, K)
+    plt.figure(figsize=(8, 6))
+    plt.imshow(arr, cmap=cmap, origin='lower', extent=extent, aspect='equal')
+    plt.colorbar(label='Value') # 한글 제거
+    plt.title(title)
     
     # extent가 제공되면 Z-space 축 라벨 사용, 아니면 X-space 축 라벨 사용
-    _plt.xlabel('Z-Dim 1' if extent is not None else 'X-coordinate') 
-    _plt.ylabel('Z-Dim 2' if extent is not None else 'Y-coordinate') 
+    plt.xlabel('Z-Dim 1' if extent is not None else 'X-coordinate') 
+    plt.ylabel('Z-Dim 2' if extent is not None else 'Y-coordinate') 
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    _plt.savefig(filepath)
-    _plt.close()
+    plt.savefig(filepath)
+    plt.close()
 
 def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histogram.png', cmap='viridis', xlim=None, ylim=None):
     """
@@ -584,32 +580,29 @@ def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histog
         tuple: (actual_xmin, actual_xmax, actual_ymin, actual_ymax) 실제 플롯된 축 범위.
                xlim/ylim이 지정된 경우 해당 범위가 반환됩니다.
     """
-    import numpy as _np
-    import matplotlib.pyplot as _plt
-    import os
 
-    _plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(8, 6))
     
     # hist2d는 (counts, xedges, yedges, image)를 반환합니다.
-    _, xedges, yedges, _ = _plt.hist2d(X[:, 0], X[:, 1], bins=bins, cmap=cmap)
+    _, xedges, yedges, _ = plt.hist2d(X[:, 0], X[:, 1], bins=bins, cmap=cmap)
     
-    _plt.colorbar(label='Data Density')
-    _plt.title(title)
-    _plt.xlabel('X-coordinate')
-    _plt.ylabel('Y-coordinate')
+    plt.colorbar(label='Data Density')
+    plt.title(title)
+    plt.xlabel('X-coordinate')
+    plt.ylabel('Y-coordinate')
     
     actual_xmin, actual_xmax = xedges[0], xedges[-1]
     actual_ymin, actual_ymax = yedges[0], yedges[-1]
 
     if xlim is not None:
-        _plt.xlim(xlim)
+        plt.xlim(xlim)
         actual_xmin, actual_xmax = xlim
     if ylim is not None:
-        _plt.ylim(ylim)
+        plt.ylim(ylim)
         actual_ymin, actual_ymax = ylim
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    _plt.savefig(filepath)
-    _plt.close()
+    plt.savefig(filepath)
+    plt.close()
 
     return (actual_xmin, actual_xmax, actual_ymin, actual_ymax) # 실제 범위 반환

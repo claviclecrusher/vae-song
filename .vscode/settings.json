@@ -2,7 +2,7 @@
     "editor.defaultFormatter": "ms-python.black-formatter",
     "editor.formatOnPaste": true,
     "editor.formatOnSave": true,
-    "python.languageServer": "Pylance",
+    "python.languageServer": "None",
     "python.terminal.executeInFileDir": false,
     "python.analysis.typeCheckingMode": "off"
 }
