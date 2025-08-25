@@ -140,8 +140,8 @@ def main():
 
     # Z-space visualization parameters
     parser.add_argument('--K_z', type=int, default=16, help='Grid size (K_z x K_z) for Z-space visualization.')
-    parser.add_argument('--z_min', type=float, default=None, help='Minimum value for Z-space grid visualization range.')
-    parser.add_argument('--z_max', type=float, default=None, help='Maximum value for Z-space grid visualization range.')
+    parser.add_argument('--z_min', type=float, default=-3.0, help='Minimum value for Z-space grid visualization range. None means use the actual range from the data.')
+    parser.add_argument('--z_max', type=float, default=3.0, help='Maximum value for Z-space grid visualization range. None means use the actual range from the data.')
 
 
     args = parser.parse_args()
