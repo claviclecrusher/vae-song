@@ -140,8 +140,8 @@ def main():
 
     # Z-space visualization parameters
     parser.add_argument('--K_z', type=int, default=16, help='Grid size (K_z x K_z) for Z-space visualization.')
-    parser.add_argument('--z_min', type=float, default=-3.0, help='Minimum value for Z-space grid visualization range.')
-    parser.add_argument('--z_max', type=float, default=3.0, help='Maximum value for Z-space grid visualization range.')
+    parser.add_argument('--z_min', type=float, default=None, help='Minimum value for Z-space grid visualization range.')
+    parser.add_argument('--z_max', type=float, default=None, help='Maximum value for Z-space grid visualization range.')
 
 
     args = parser.parse_args()
@@ -221,19 +221,11 @@ def main():
             )
             print(f"Latent space (Z) visualization for {args.alpha}")
             
-            # `--z_min`과 `--z_max`가 기본값일 경우, 실제 플롯된 Z 범위로 extent를 업데이트합니다.
-            # 약간의 여유를 두거나, 정확히 플롯된 경계를 사용합니다.
-            # 여기서는 플롯된 경계를 직접 사용합니다.
-            if args.z_min == -3.0 and args.z_max == 3.0: # 기본값 사용 여부 확인
-                 z_plot_extent = [actual_xmin, actual_xmax, actual_ymin, actual_ymax]
-                 # 필요하다면 경계에 약간의 여유를 줄 수 있습니다. (예: * 1.1)
-                 # z_plot_extent = [actual_xmin * 1.1 if actual_xmin < 0 else actual_xmin * 0.9, 
-                 #                  actual_xmax * 1.1 if actual_xmax > 0 else actual_xmax * 0.9,
-                 #                  actual_ymin * 1.1 if actual_ymin < 0 else actual_ymin * 0.9,
-                 #                  actual_ymax * 1.1 if actual_ymax > 0 else actual_ymax * 0.9]
-            else:
-                 # 사용자가 z_min, z_max를 지정한 경우 해당 범위 사용
-                 z_plot_extent = [args.z_min, args.z_max, args.z_min, args.z_max]
+            
+            if args.z_min == None or args.z_max == None: # 기본값 사용 여부 확인
+                z_plot_extent = [actual_xmin, actual_xmax, actual_ymin, actual_ymax]
+            else:# 사용자가 z_min, z_max를 지정한 경우 해당 범위 사용
+                z_plot_extent = [args.z_min, args.z_max, args.z_min, args.z_max]
 
         else:
             print(f"Skipping Z space 2D histogram visualization from X-space: Model's actual latent dimension is {actual_latent_dim}D, not 2D for direct plotting.")
