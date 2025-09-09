@@ -55,9 +55,8 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
             if X_cell.size(0) < 2:
                 continue
 
-            gen_cell = torch.Generator(device=device).manual_seed(100000 + cell_idx)
-            z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z, generator=gen_cell).view(-1, mu_cell.size(-1))
-            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, generator=gen_cell)
+            z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z).view(-1, mu_cell.size(-1))
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips)
             lips_vals[cell_idx] = lips
             inv_lips_vals[cell_idx] = inv_lips
             bi_lips_vals[cell_idx] = bi_lips
@@ -92,8 +91,7 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             z_center_sample = z_grid_centers[cell_idx]
             
             # Generate z samples around the Z-space cell center
-            gen_z = torch.Generator(device=device).manual_seed(200000 + cell_idx)
-            z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device, generator=gen_z) * 0.1 
+            z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device) * 0.1 
             
             # --- KL Calculation (Z -> X_recon -> Z_re_encoded) ---
             x_recon = model.decode(z_samples)
@@ -105,7 +103,7 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             # --- Decoder Lipschitz Calculation (Z -> X_recon) ---
             if z_samples.size(0) < 2:
                 continue
-            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, generator=gen_z)
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips)
             lips_vals_z[cell_idx] = lips
             inv_lips_vals_z[cell_idx] = inv_lips
             bi_lips_vals_z[cell_idx] = bi_lips
@@ -218,8 +216,7 @@ def main():
         if actual_latent_dim == 2: 
             X_test_tensor = test_dataset_x.X.to(args.device)
             mu, log_var = model.encode(X_test_tensor)
-            gen_vis = torch.Generator(device=args.device).manual_seed(args.seed + 12345)
-            z_test_np = reparameterize(mu, log_var, nsamples=1, generator=gen_vis).squeeze(1).cpu().numpy()
+            z_test_np = reparameterize(mu, log_var, nsamples=1).squeeze(1).cpu().numpy()
             
             # plot_2d_histogram을 호출하고 실제 플롯된 범위를 받아옵니다.
             actual_xmin, actual_xmax, actual_ymin, actual_ymax = plot_2d_histogram(

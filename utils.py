@@ -15,7 +15,7 @@ def reparameterize(mu, logvar, nsamples=1, generator=None):
     std = logvar.mul(0.5).exp()
     mu_expd = mu.unsqueeze(1).expand(batch_size, nsamples, nz)
     std_expd = std.unsqueeze(1).expand(batch_size, nsamples, nz)
-    eps = torch.randn_like(std_expd, generator=generator)
+    eps = torch.randn_like(std_expd)
     return mu_expd + torch.mul(eps, std_expd) # (batch, nsamples, nz)
 
 def calc_au_per_batch(z, eps=0.01):
