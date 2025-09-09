@@ -9,13 +9,13 @@ import numpy as np
 from torch.utils.data import DataLoader
 from sklearn.manifold import TSNE
 
-def reparameterize(mu, logvar, nsamples=1):
+def reparameterize(mu, logvar, nsamples=1, generator=None):
     """(Wang et al.) sample from posterior Gaussian family"""
     batch_size, nz = mu.size()
     std = logvar.mul(0.5).exp()
     mu_expd = mu.unsqueeze(1).expand(batch_size, nsamples, nz)
     std_expd = std.unsqueeze(1).expand(batch_size, nsamples, nz)
-    eps = torch.zeros_like(std_expd).normal_()
+    eps = torch.randn_like(std_expd, generator=generator)
     return mu_expd + torch.mul(eps, std_expd) # (batch, nsamples, nz)
 
 def calc_au_per_batch(z, eps=0.01):
@@ -501,40 +501,31 @@ def compute_local_reg(model, loader, K):
             regs.append(loss_reg_term.item() / X_cell.size(0))
     return np.array(regs)
 
-def estimate_local_lipschitz(func, X, num_pairs=100, metric=2, quantile=0.01):
+def estimate_local_lipschitz(func, X, num_pairs=2000, metric=2, quantile=0.05, eps=1e-3, generator=None):
     """
     주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정.
-    1/L(z) <= A <= ||f(z) - f(z')|| / ||z - z'|| <= B <= L(z)
-
-    Args:
-        func (function): 추정할 함수.
-        X (torch.Tensor): 입력 데이터.
-        num_pairs (int): 랜덤 샘플 페어 개수.
-        measure (str): 측정 방법 ('inverse_lipschitz', 'lipschitz', 'bi_lipschitz').
+    반환: (inverse_lipschitz, lipschitz, bi_lipschitz)
     """
     if X.size(0) < 2:
-        return 0.0
+        return 0.0, 0.0, 0.0
     with torch.no_grad():
         N = X.size(0)
-        idx1 = torch.randint(0, N, (num_pairs,), device=X.device)
-        idx2 = torch.randint(0, N, (num_pairs,), device=X.device)
+        if generator is None:
+            generator = torch.Generator(device=X.device).manual_seed(0)
+        idx1 = torch.randint(0, N, (num_pairs,), device=X.device, generator=generator)
+        idx2 = torch.randint(0, N, (num_pairs,), device=X.device, generator=generator)
         x1 = X[idx1]
         x2 = X[idx2]
         y1 = func(x1)
         y2 = func(x2)
-        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8) # ||f(z) - f(z')||
-        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=1e-8) # ||z - z'||
-        # diff_x: clamp 로 0 나오면 A,B 값 자체가 무한대가 되는 것을 방지.
-        # diff_y: clamp 로 0 나오면 1/A 값이 무한대가 되는 것을 방지. (동등하게 처리해야 함.)
-    
-        lip_ratio = (diff_y / diff_x)
-        A = lip_ratio.quantile(quantile)
-        B = lip_ratio.quantile(1 - quantile)
-        if A.item() < 1e-8:
-            invA = float('inf')
-        else:
-            invA = 1/A
-        return invA.item(), B.item(), torch.max(invA, B).item()
+        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=eps)
+        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=eps)
+        lip_ratio = diff_y / diff_x
+        A = torch.quantile(lip_ratio, quantile).clamp(min=eps)
+        B = torch.quantile(lip_ratio, 1 - quantile)
+        invA = 1.0 / A
+        bi = torch.maximum(invA, B)
+        return invA.item(), B.item(), bi.item()
 
 def plot_heatmap(vals, K, title, filepath, cmap='viridis', extent=None): # extent 인자 추가
     """

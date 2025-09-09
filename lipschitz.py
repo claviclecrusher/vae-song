@@ -13,6 +13,7 @@ from dataset import load_dataset, GridMixtureDataset, WeightedGridMixtureDataset
 from model import LRVAE
 from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap, plot_2d_histogram, reparameterize
 import time
+import random
 
 # --- Constants ---
 DEFAULT_EMPTY_CELL_FILL_VALUE = -5.0 # Default value to fill empty cells in heatmaps
@@ -54,8 +55,9 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
             if X_cell.size(0) < 2:
                 continue
 
-            z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z).view(-1, mu_cell.size(-1))
-            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips)
+            gen_cell = torch.Generator(device=device).manual_seed(100000 + cell_idx)
+            z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z, generator=gen_cell).view(-1, mu_cell.size(-1))
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, generator=gen_cell)
             lips_vals[cell_idx] = lips
             inv_lips_vals[cell_idx] = inv_lips
             bi_lips_vals[cell_idx] = bi_lips
@@ -90,7 +92,8 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             z_center_sample = z_grid_centers[cell_idx]
             
             # Generate z samples around the Z-space cell center
-            z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device) * 0.1 
+            gen_z = torch.Generator(device=device).manual_seed(200000 + cell_idx)
+            z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device, generator=gen_z) * 0.1 
             
             # --- KL Calculation (Z -> X_recon -> Z_re_encoded) ---
             x_recon = model.decode(z_samples)
@@ -102,7 +105,7 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             # --- Decoder Lipschitz Calculation (Z -> X_recon) ---
             if z_samples.size(0) < 2:
                 continue
-            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips)
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips, generator=gen_z)
             lips_vals_z[cell_idx] = lips
             inv_lips_vals_z[cell_idx] = inv_lips
             bi_lips_vals_z[cell_idx] = bi_lips
@@ -149,11 +152,14 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     if args.seed is None:
-        args.seed = int(time.time())
+        args.seed = 42
+    random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     actual_latent_dim = args.hidden_channels[-1]
     if actual_latent_dim != 2: 
@@ -171,7 +177,8 @@ def main():
         pattern=args.distribution_pattern,
         seed=args.seed
     )
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+    g_loader = torch.Generator(device='cpu').manual_seed(args.seed)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True, generator=g_loader)
 
     # Visualize training data distribution
     X_train_vis = train_dataset.X.numpy()
@@ -211,7 +218,8 @@ def main():
         if actual_latent_dim == 2: 
             X_test_tensor = test_dataset_x.X.to(args.device)
             mu, log_var = model.encode(X_test_tensor)
-            z_test_np = reparameterize(mu, log_var, nsamples=1).squeeze(1).cpu().numpy()
+            gen_vis = torch.Generator(device=args.device).manual_seed(args.seed + 12345)
+            z_test_np = reparameterize(mu, log_var, nsamples=1, generator=gen_vis).squeeze(1).cpu().numpy()
             
             # plot_2d_histogram을 호출하고 실제 플롯된 범위를 받아옵니다.
             actual_xmin, actual_xmax, actual_ymin, actual_ymax = plot_2d_histogram(
@@ -236,7 +244,7 @@ def main():
     model.alpha = args.alpha
     model.wu_alpha = args.alpha 
 
-    cell_kl_vals_x, cell_lips_vals_x, cell_inv_lips_vals_x, cell_bi_lips_vals_x = _get_kl_and_lipschitz_for_x_cells(model, test_dataset_x, args.K, args.device)
+    cell_kl_vals_x, cell_lips_vals_x, cell_inv_lips_vals_x, cell_bi_lips_vals_x = _get_kl_and_lipschitz_for_x_cells(model, test_dataset_x, args.K, args.device, nsamples_z=10, num_pairs_lips=2000)
 
     plot_heatmap(cell_kl_vals_x, args.K, f"KL Div (X-space, alpha={args.alpha})",
                  os.path.join(args.output_dir, f"kl_div_x_space_alpha_{args.alpha}.png"), cmap='viridis')
@@ -253,7 +261,7 @@ def main():
     # 5. KL and Decoder Bi-Lipschitz Visualization (Z-space based)
     cell_kl_vals_z, cell_lips_vals_z, cell_inv_lips_vals_z, cell_bi_lips_vals_z = _get_kl_and_lipschitz_for_z_cells(
         model, args.K_z, args.z_min, args.z_max, actual_latent_dim, args.device,
-        nsamples_z_per_cell=100, num_pairs_lips=100, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE
+        nsamples_z_per_cell=100, num_pairs_lips=2000, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE
     )
     
     if not np.all(cell_kl_vals_z == DEFAULT_EMPTY_CELL_FILL_VALUE):
