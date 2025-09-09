@@ -120,7 +120,7 @@ def main():
     parser.add_argument('--beta', type=float, default=1.0, help='Beta for KL Divergence term in VAE loss.')
     parser.add_argument('--batch_size', type=int, default=256, help='Batch size for training and testing.')
     parser.add_argument('--device', type=str, default='cpu', help='Device to run on (cuda or cpu).')
-    parser.add_argument('--output_dir', type=str, default='results/exp_new_setup', help='Output directory for results.')
+    parser.add_argument('--output_dir', type=str, default='results/ablation', help='Output directory for results.')
     
     # Data distribution parameters
     parser.add_argument('--train_total_samples', type=int, default=10000, help='Total training samples.')
@@ -297,7 +297,53 @@ def main():
 
     df = pd.DataFrame(records)
     df.to_csv(os.path.join(args.output_dir, 'experiment_metrics.csv'), index=False)
+    
+    # Calculate overall metrics for exp_lip.csv
+    # KL divergence: average of all non-empty cells
+    kl_x_valid = cell_kl_vals_x[cell_kl_vals_x != DEFAULT_EMPTY_CELL_FILL_VALUE]
+    kl_z_valid = cell_kl_vals_z[cell_kl_vals_z != DEFAULT_EMPTY_CELL_FILL_VALUE]
+    
+    if len(kl_x_valid) > 0 and len(kl_z_valid) > 0:
+        avg_kl = (kl_x_valid.mean() + kl_z_valid.mean()) / 2
+    elif len(kl_x_valid) > 0:
+        avg_kl = kl_x_valid.mean()
+    elif len(kl_z_valid) > 0:
+        avg_kl = kl_z_valid.mean()
+    else:
+        avg_kl = 0.0
+    
+    # Bi-Lipschitz constant L(z): average of all non-empty cells
+    bi_lips_x_valid = cell_bi_lips_vals_x[cell_bi_lips_vals_x != DEFAULT_EMPTY_CELL_FILL_VALUE]
+    bi_lips_z_valid = cell_bi_lips_vals_z[cell_bi_lips_vals_z != DEFAULT_EMPTY_CELL_FILL_VALUE]
+    
+    if len(bi_lips_x_valid) > 0 and len(bi_lips_z_valid) > 0:
+        avg_bi_lips = (bi_lips_x_valid.mean() + bi_lips_z_valid.mean()) / 2
+    elif len(bi_lips_x_valid) > 0:
+        avg_bi_lips = bi_lips_x_valid.mean()
+    elif len(bi_lips_z_valid) > 0:
+        avg_bi_lips = bi_lips_z_valid.mean()
+    else:
+        avg_bi_lips = 0.0
+    
+    # Create exp_lip.csv entry
+    exp_lip_entry = {
+        'alpha': args.alpha,
+        'beta': args.beta,
+        'kl': avg_kl,
+        'L(z)': avg_bi_lips
+    }
+    
+    # Append to exp_lip.csv
+    exp_lip_file = os.path.join(os.path.dirname(args.output_dir), 'exp_lip.csv')
+    exp_lip_df = pd.DataFrame([exp_lip_entry])
+    
+    if os.path.exists(exp_lip_file):
+        exp_lip_df.to_csv(exp_lip_file, mode='a', header=False, index=False)
+    else:
+        exp_lip_df.to_csv(exp_lip_file, index=False)
+    
     print(f"Experiment complete. Results saved to {args.output_dir}")
+    print(f"Overall metrics - KL: {avg_kl:.4f}, Bi-Lipschitz L(z): {avg_bi_lips:.4f}")
 
 if __name__ == '__main__':
     main()
