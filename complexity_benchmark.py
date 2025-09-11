@@ -11,6 +11,7 @@ from torchvision.utils import save_image, make_grid
 
 import model as Model
 import dataset as Dataset
+from utils import apply_grad_clip
 
 
 # -------------------- Memory helpers --------------------
@@ -94,7 +95,8 @@ def evaluate(model: Model.VAE, loader_test: DataLoader, device: str):
 
 
 def train_one_model(model: Model.VAE, loader_train: DataLoader, loader_test: DataLoader,
-                    epochs: int, batch_size: int, device: str, num_mc_samples: int = 1):
+                    epochs: int, batch_size: int, device: str, num_mc_samples: int = 1,
+                    grad_clip: dict = None):
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs * len(loader_train))
@@ -123,6 +125,7 @@ def train_one_model(model: Model.VAE, loader_train: DataLoader, loader_test: Dat
                     p.grad *= lam
             loss_reg.backward(retain_graph=True)
             loss_recon.backward()
+            apply_grad_clip(model, grad_clip)
             optimizer.step()
             scheduler.step()
 
@@ -161,6 +164,12 @@ def run_complexity_benchmark():
     parser.add_argument('--alpha', type=float, default=0.1)
     parser.add_argument('--beta', type=float, default=1.0)
     parser.add_argument('--inverse_lipschitz', type=float, default=0.0)
+    # grad clipping args
+    parser.add_argument('--grad_clip_enabled', action='store_true', help='Enable gradient clipping')
+    parser.add_argument('--grad_clip_type', type=str, default='norm', choices=['norm', 'value'])
+    parser.add_argument('--grad_clip_max_norm', type=float, default=1.0)
+    parser.add_argument('--grad_clip_norm_type', type=float, default=2.0)
+    parser.add_argument('--grad_clip_value', type=float, default=1.0)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -217,6 +226,14 @@ def run_complexity_benchmark():
 
     results = []
 
+    grad_clip_cfg = {
+        'enabled': args.grad_clip_enabled,
+        'clip_type': args.grad_clip_type,
+        'max_norm': args.grad_clip_max_norm,
+        'norm_type': args.grad_clip_norm_type,
+        'clip_value': args.grad_clip_value,
+    }
+
     for model_name, factory in models_to_test:
         print(f"\n=== Testing {model_name} on MNIST ===")
         model = factory()
@@ -227,7 +244,7 @@ def run_complexity_benchmark():
         buffer_size = sum(b.nelement() * b.element_size() for b in model.buffers())
         model_size_mb = (param_size + buffer_size) / (1024.0 ** 2)
 
-        metrics = train_one_model(model, loader_train, loader_test, args.epochs, args.batch_size, device, args.num_mc_samples)
+        metrics = train_one_model(model, loader_train, loader_test, args.epochs, args.batch_size, device, args.num_mc_samples, grad_clip=grad_clip_cfg)
 
         # save weights and samples
         save_model_weights(model, os.path.join(args.output_dir, 'weights'), model_name)

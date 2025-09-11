@@ -11,7 +11,7 @@ import torch.nn.functional as F
 # Import all necessary components from dataset, model, utils
 from dataset import load_dataset, GridMixtureDataset, WeightedGridMixtureDataset, SimpleGaussianMixtureDataset
 from model import LRVAE
-from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap, plot_2d_histogram, reparameterize
+from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap, plot_2d_histogram, reparameterize, apply_grad_clip
 import time
 import random
 
@@ -20,7 +20,7 @@ DEFAULT_EMPTY_CELL_FILL_VALUE = -5.0 # Default value to fill empty cells in heat
 # --- Constants End ---
 
 # --- train_model function definition ---
-def train_model(model, loader, epochs, lr, device):
+def train_model(model, loader, epochs, lr, device, grad_clip=None):
     model.to(device).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     for epoch in tqdm(range(epochs), desc="Training Model"):
@@ -30,6 +30,7 @@ def train_model(model, loader, epochs, lr, device):
             recon, mu, log_var, input_z_stack, z_recon_stack = model(X)
             total_loss, _, _, _ = model.loss(X, recon, mu, log_var, input_z_stack, z_recon_stack)
             total_loss.backward()
+            apply_grad_clip(model, grad_clip)
             optimizer.step()
     return model
 # --- train_model function end ---
@@ -145,6 +146,13 @@ def main():
     parser.add_argument('--z_max', type=float, default=3.0, help='Maximum value for Z-space grid visualization range. None means use the actual range from the data.')
 
 
+    # grad clipping options
+    parser.add_argument('--grad_clip_enabled', action='store_true', help='Enable gradient clipping')
+    parser.add_argument('--grad_clip_type', type=str, default='norm', choices=['norm', 'value'])
+    parser.add_argument('--grad_clip_max_norm', type=float, default=1.0)
+    parser.add_argument('--grad_clip_norm_type', type=float, default=2.0)
+    parser.add_argument('--grad_clip_value', type=float, default=1.0)
+
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -191,7 +199,15 @@ def main():
     model.alpha = args.alpha
     model.wu_alpha = 1.0
 
-    train_model(model, train_loader, args.epochs, args.lr, args.device)
+    grad_clip_cfg = {
+        'enabled': args.grad_clip_enabled,
+        'clip_type': args.grad_clip_type,
+        'max_norm': args.grad_clip_max_norm,
+        'norm_type': args.grad_clip_norm_type,
+        'clip_value': args.grad_clip_value,
+    }
+
+    train_model(model, train_loader, args.epochs, args.lr, args.device, grad_clip=grad_clip_cfg)
     print("Model training complete.")
 
     # 3. Test Data Generation (Uniform)

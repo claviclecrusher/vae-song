@@ -8,6 +8,7 @@ import torchvision
 import os
 import model as Model
 from utils import pca_visualization
+from utils import apply_grad_clip
 import utils
 import dataset
 import yaml
@@ -110,7 +111,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         
     return loss_total / len(loader_test), loss_recon_total / len(loader_test), loss_reg_total / len(loader_test), loss_lr_total / len(loader_test)
 
-def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None, num_mc_samples=1):
+def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None, num_mc_samples=1, grad_clip=None):
     # 데이터 타입 기본값 설정 (2d: 이미지), 필요 시 덮어쓰기
     data_type = '2d'
     
@@ -187,6 +188,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
             loss_reg.backward(retain_graph=True)
             loss_recon.backward()
             #loss.backward()
+            apply_grad_clip(model, grad_clip)
             optimizer.step()
             scheduler.step()
 
@@ -317,7 +319,8 @@ def run_experiment(config_path):
                         logfilename=logfilename,
                         resultname=resultname,
                         pt_param=common_params.get('pt_param', None),
-                        num_mc_samples=model_params.get('num_mc_samples', 1)
+                        num_mc_samples=model_params.get('num_mc_samples', 1),
+                        grad_clip=common_params.get('grad_clip', None)
                     )
                     
     elif exp_type == 'vae':
@@ -340,7 +343,8 @@ def run_experiment(config_path):
                     logfilename=logfilename,
                     resultname=resultname,
                     pt_param=common_params.get('pt_param', None),
-                    num_mc_samples=model_params.get('num_mc_samples', 1)
+                    num_mc_samples=model_params.get('num_mc_samples', 1),
+                    grad_clip=common_params.get('grad_clip', None)
                 )
                 
     elif exp_type == 'nae':
@@ -359,7 +363,8 @@ def run_experiment(config_path):
                 logfilename=logfilename,
                 resultname=resultname,
                 pt_param=common_params.get('pt_param', None),
-                num_mc_samples=model_params.get('num_mc_samples', 1)
+                num_mc_samples=model_params.get('num_mc_samples', 1),
+                grad_clip=common_params.get('grad_clip', None)
             )
 
     elif exp_type == 'lrvae':
@@ -385,7 +390,8 @@ def run_experiment(config_path):
                         logfilename=logfilename,
                         resultname=resultname,
                         pt_param=common_params.get('pt_param', None),
-                        num_mc_samples=model_params.get('num_mc_samples', 1)
+                        num_mc_samples=model_params.get('num_mc_samples', 1),
+                        grad_clip=common_params.get('grad_clip', None)
                     )
 
 if __name__ == "__main__":

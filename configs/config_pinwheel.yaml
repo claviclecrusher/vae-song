@@ -8,6 +8,12 @@ common_params:
   logfilename: null
   resultname: null
   # pt_param: 'path/to/pretrained.pt'  # 사전학습된 모델 경로 (선택사항)
+  grad_clip:
+    enabled: true
+    clip_type: 'norm'  # 'norm' or 'value'
+    max_norm: 1.0      # used when clip_type == 'norm'
+    norm_type: 2.0     # used when clip_type == 'norm'
+    clip_value: 1.0    # used when clip_type == 'value'
 
 model_params:
   beta_list: [0.001, 0.01]  # beta 값 리스트

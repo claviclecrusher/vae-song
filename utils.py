@@ -9,6 +9,34 @@ import numpy as np
 from torch.utils.data import DataLoader
 from sklearn.manifold import TSNE
 
+def apply_grad_clip(model, grad_clip_cfg):
+    """
+    Gradient clipping helper.
+    Args:
+        model: torch.nn.Module
+        grad_clip_cfg: dict or None. Expected keys:
+            - enabled (bool)
+            - clip_type (str): 'norm' or 'value'
+            - max_norm (float): used when clip_type == 'norm'
+            - norm_type (float or int): p-norm, default 2.0
+            - clip_value (float): used when clip_type == 'value'
+    """
+    if grad_clip_cfg is None:
+        return
+    if not grad_clip_cfg.get('enabled', False):
+        return
+    clip_type = grad_clip_cfg.get('clip_type', 'norm')
+    if clip_type == 'norm':
+        max_norm = float(grad_clip_cfg.get('max_norm', 1.0))
+        norm_type = float(grad_clip_cfg.get('norm_type', 2.0))
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm, norm_type=norm_type)
+    elif clip_type == 'value':
+        clip_value = float(grad_clip_cfg.get('clip_value', 1.0))
+        torch.nn.utils.clip_grad_value_(model.parameters(), clip_value)
+    else:
+        # fallback: do nothing if unknown type
+        pass
+
 def reparameterize(mu, logvar, nsamples=1, generator=None):
     """(Wang et al.) sample from posterior Gaussian family"""
     batch_size, nz = mu.size()
