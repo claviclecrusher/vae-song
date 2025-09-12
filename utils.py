@@ -572,15 +572,13 @@ def plot_heatmap(vals, K, title, filepath, cmap='viridis', extent=None): # exten
     arr = np.array(vals).reshape(K, K)
     plt.figure(figsize=(8, 6))
     plt.imshow(arr, cmap=cmap, origin='lower', extent=extent, aspect='equal')
-    plt.colorbar(label='Value') # 한글 제거
-    plt.title(title)
-    
-    # extent가 제공되면 Z-space 축 라벨 사용, 아니면 X-space 축 라벨 사용
-    plt.xlabel('Z-Dim 1' if extent is not None else 'X-coordinate') 
-    plt.ylabel('Z-Dim 2' if extent is not None else 'Y-coordinate') 
+    plt.colorbar()
+    # plt.title(title)  # 제목 제거
+    # plt.xlabel('Z-Dim 1' if extent is not None else 'X-coordinate')  # x축 라벨 제거
+    # plt.ylabel('Z-Dim 2' if extent is not None else 'Y-coordinate')  # y축 라벨 제거
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    plt.savefig(filepath)
+    plt.savefig(filepath, bbox_inches='tight', pad_inches=0)
     plt.close()
 
 def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histogram.png', cmap='viridis', xlim=None, ylim=None):
@@ -605,10 +603,10 @@ def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histog
     # hist2d는 (counts, xedges, yedges, image)를 반환합니다.
     _, xedges, yedges, _ = plt.hist2d(X[:, 0], X[:, 1], bins=bins, cmap=cmap)
     
-    plt.colorbar(label='Data Density')
-    plt.title(title)
-    plt.xlabel('X-coordinate')
-    plt.ylabel('Y-coordinate')
+    plt.colorbar()
+    # plt.title(title)  # 제목 제거
+    # plt.xlabel('X-coordinate')  # x축 라벨 제거
+    # plt.ylabel('Y-coordinate')  # y축 라벨 제거
     
     actual_xmin, actual_xmax = xedges[0], xedges[-1]
     actual_ymin, actual_ymax = yedges[0], yedges[-1]
@@ -621,7 +619,7 @@ def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histog
         actual_ymin, actual_ymax = ylim
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    plt.savefig(filepath)
+    plt.savefig(filepath, bbox_inches='tight', pad_inches=0)
     plt.close()
 
     return (actual_xmin, actual_xmax, actual_ymin, actual_ymax) # 실제 범위 반환
