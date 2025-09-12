@@ -234,19 +234,21 @@ def main():
             mu, log_var = model.encode(X_test_tensor)
             z_test_np = reparameterize(mu, log_var, nsamples=1).squeeze(1).cpu().numpy()
             
+            # encoded_z의 실제 범위를 계산
+            actual_xmin, actual_xmax = z_test_np[:, 0].min(), z_test_np[:, 0].max()
+            actual_ymin, actual_ymax = z_test_np[:, 1].min(), z_test_np[:, 1].max()
+            
             # plot_2d_histogram을 호출하고 실제 플롯된 범위를 받아옵니다.
-            actual_xmin, actual_xmax, actual_ymin, actual_ymax = plot_2d_histogram(
+            plot_2d_histogram(
                 z_test_np, bins=args.K_z, 
                 title=f'Encoded Latent Z Distribution (from X-space, Actual dim={actual_latent_dim})',
                 filepath=os.path.join(args.output_dir, f'encoded_z_alpha{args.alpha}.png')
             )
             print(f"Latent space (Z) visualization for {args.alpha}")
             
-            
-            if args.z_min == None or args.z_max == None: # 기본값 사용 여부 확인
-                z_plot_extent = [actual_xmin, actual_xmax, actual_ymin, actual_ymax]
-            else:# 사용자가 z_min, z_max를 지정한 경우 해당 범위 사용
-                z_plot_extent = [args.z_min, args.z_max, args.z_min, args.z_max]
+            # encoded_z의 실제 범위를 z_plot_extent로 설정 (모든 Z-space heatmap에 동일하게 적용)
+            z_plot_extent = [actual_xmin, actual_xmax, actual_ymin, actual_ymax]
+            print(f"Z-space extent set to: x=[{actual_xmin:.3f}, {actual_xmax:.3f}], y=[{actual_ymin:.3f}, {actual_ymax:.3f}]")
 
         else:
             print(f"Skipping Z space 2D histogram visualization from X-space: Model's actual latent dimension is {actual_latent_dim}D, not 2D for direct plotting.")
@@ -272,8 +274,14 @@ def main():
                  os.path.join(args.output_dir, f"bi_lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
 
     # 5. KL and Decoder Bi-Lipschitz Visualization (Z-space based)
+    # encoded_z의 실제 범위를 사용하여 Z-space heatmap 생성
+    if actual_latent_dim == 2:
+        z_min_actual, z_max_actual = z_plot_extent[0], z_plot_extent[1]  # x 범위 사용
+    else:
+        z_min_actual, z_max_actual = args.z_min, args.z_max  # 기본값 사용
+    
     cell_kl_vals_z, cell_lips_vals_z, cell_inv_lips_vals_z, cell_bi_lips_vals_z = _get_kl_and_lipschitz_for_z_cells(
-        model, args.K_z, args.z_min, args.z_max, actual_latent_dim, args.device,
+        model, args.K_z, z_min_actual, z_max_actual, actual_latent_dim, args.device,
         nsamples_z_per_cell=100, num_pairs_lips=2000, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE
     )
     
