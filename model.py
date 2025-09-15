@@ -3,6 +3,7 @@ import module
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
+import math
 
 
 class VAE(torch.nn.Module):
@@ -874,3 +875,188 @@ class LIDVAE(VAE):
 
         return loss_recon + loss_reg * self.beta, loss_recon.detach(), loss_reg.detach(), 0.0
 
+
+########################################
+# SetVAE for 3D point cloud (inspired by SetVAE)
+# - Permutation-invariant encoder (DeepSets-style)
+# - Fixed-length set decoder conditioned on latent code
+# - Chamfer distance for reconstruction loss
+########################################
+
+def chamfer_distance(points_pred, points_gt):
+    """
+    Compute symmetric Chamfer distance between predicted and ground-truth point sets.
+    points_pred: Tensor [B, Np, 3]
+    points_gt:   Tensor [B, Ng, 3]
+    Returns: scalar Tensor
+    """
+    # Use squared Euclidean distances
+    # torch.cdist -> [B, Np, Ng]
+    dist = torch.cdist(points_pred, points_gt, p=2)  # L2 distance
+    dist2 = dist.pow(2)
+    # For each point in pred, find closest in gt
+    min_pred_to_gt, _ = dist2.min(dim=2)  # [B, Np]
+    # For each point in gt, find closest in pred
+    min_gt_to_pred, _ = dist2.min(dim=1)  # [B, Ng]
+    cd = min_pred_to_gt.mean(dim=1) + min_gt_to_pred.mean(dim=1)  # [B]
+    return cd.mean()
+
+
+class SetEncoder(nn.Module):
+    def __init__(self, point_dim=3, hidden_dims=[128, 256, 512], latent_dim=128, pool_type='max'):
+        super().__init__()
+        self.pool_type = pool_type
+        layers = []
+        last = point_dim
+        for h in hidden_dims:
+            layers.append(nn.Sequential(
+                nn.Linear(last, h),
+                nn.BatchNorm1d(h),
+                nn.ReLU(),
+            ))
+            last = h
+        self.phi = nn.ModuleList(layers)
+        self.fc_mu = nn.Linear(last, latent_dim)
+        self.fc_logvar = nn.Linear(last, latent_dim)
+
+    def forward(self, points):
+        # points: [B, N, 3]
+        B, N, D = points.shape
+        x = points.view(B * N, D)
+        for layer in self.phi:
+            x = layer(x)
+        x = x.view(B, N, -1)
+        if self.pool_type == 'mean':
+            s = x.mean(dim=1)
+        elif self.pool_type == 'sum':
+            s = x.sum(dim=1)
+        else:  # max
+            s, _ = x.max(dim=1)
+        mu = self.fc_mu(s)
+        log_var = self.fc_logvar(s)
+        return mu, log_var
+
+
+class SetDecoder(nn.Module):
+    def __init__(self, latent_dim=128, num_points=2048, hidden_dims=[512, 256, 128], point_dim=3):
+        super().__init__()
+        self.num_points = num_points
+        # Learnable per-point queries
+        self.point_queries = nn.Parameter(torch.randn(num_points, 64) * 0.02)
+        input_dim = latent_dim + 64
+
+        layers = []
+        last = input_dim
+        for h in hidden_dims:
+            layers.append(nn.Sequential(
+                nn.Linear(last, h),
+                nn.BatchNorm1d(h),
+                nn.ReLU(),
+            ))
+            last = h
+        layers.append(nn.Linear(last, point_dim))
+        self.mlp = nn.ModuleList(layers)
+
+    def forward(self, z):
+        # z: [B, D]
+        B, D = z.shape
+        queries = self.point_queries.unsqueeze(0).expand(B, -1, -1)  # [B, N, 64]
+        z_expanded = z.unsqueeze(1).expand(-1, self.num_points, -1)  # [B, N, D]
+        x = torch.cat([z_expanded, queries], dim=-1)  # [B, N, D+64]
+        x = x.reshape(B * self.num_points, -1)
+        for layer in self.mlp[:-1]:
+            x = layer(x)
+        points = self.mlp[-1](x)
+        points = points.view(B, self.num_points, -1)  # [B, N, 3]
+        return points
+
+
+class SetVAE(VAE):
+    def __init__(
+        self,
+        latent_channel=128,
+        num_points=2048,
+        encoder_hidden=[128, 256, 512],
+        decoder_hidden=[512, 256, 128],
+        beta=1.0,
+        is_log_mse=False,  # unused for set, kept for API compat
+        dataset='shapenet',
+        pool_type='max',
+    ):
+        super(SetVAE, self).__init__()
+        self.latent_channel = latent_channel
+        self.beta = beta
+        self.is_log_mse = is_log_mse
+        self.num_points = num_points
+        self.data_type = 'set'  # to disable 2D image visualization
+
+        self.encoder = SetEncoder(point_dim=3, hidden_dims=encoder_hidden, latent_dim=latent_channel, pool_type=pool_type)
+        self.decoder = SetDecoder(latent_dim=latent_channel, num_points=num_points, hidden_dims=decoder_hidden, point_dim=3)
+
+    def encode(self, input):
+        return self.encoder(input)
+
+    def decode(self, input):
+        return self.decoder(input)
+
+    def forward(self, input, latent_rand_sampling=True, L=1):
+        # input: [B, N, 3]
+        mu, log_var = self.encode(input)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
+        recon = self.decode(z)
+        # For set models, latent reconstruction path is optional; return None placeholders
+        return recon, mu, log_var, z, None
+
+    def loss(self, input, output, mu, log_var, z_input=None, z_recon=None):
+        # Chamfer distance as reconstruction loss
+        loss_recon = chamfer_distance(output, input)
+        loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+        return loss_recon + self.beta * loss_reg, loss_recon.detach(), loss_reg.detach(), torch.tensor(0.0, device=input.device)
+
+
+class SetLRVAE(SetVAE):
+    def __init__(self, alpha=0.01, **kwargs):
+        super().__init__(**kwargs)
+        self.alpha = alpha
+        self.wu_alpha = 0.0
+
+    def warmup(self, epoch, max_epoch, wu_strat='linear', up_amount=None, start_epoch=0, repeat_interval=10):
+        if wu_strat == 'linear':
+            if epoch >= start_epoch:
+                if up_amount is None:
+                    self.wu_alpha = min(self.wu_alpha + 1.0 / (max_epoch - start_epoch + 1), 1.0)
+                else:
+                    self.wu_alpha = min(self.wu_alpha + up_amount, 1.0)
+        elif wu_strat == 'exponential':
+            if epoch >= start_epoch:
+                if up_amount is None:
+                    x = (epoch - start_epoch) * math.log(2) / (max_epoch - start_epoch)
+                    self.wu_alpha = max(min(math.exp(x) - 1.0, 1.0), 0.0)
+                else:
+                    x = up_amount * (epoch - start_epoch)
+                    self.wu_alpha = max(min(math.exp(x) - 1.0, 1.0), 0.0)
+        elif wu_strat == 'repeat_linear':
+            if epoch >= start_epoch:
+                self.wu_alpha = min(1.0 / ((epoch % repeat_interval) + 1), 1.0)
+        return True
+
+    def forward(self, input, latent_rand_sampling=True, L=1):
+        mu, log_var = self.encode(input)
+        if latent_rand_sampling:
+            z = mu + torch.randn_like(mu) * torch.exp(log_var * 0.5)
+        else:
+            z = mu
+        recon = self.decode(z.detach())  # detach for latent recon pathway
+        z_recon, _ = self.encode(recon)
+        # return z (as z_input) and z_recon for latent recon loss
+        return recon, mu, log_var, z, z_recon
+
+    def loss(self, input, output, mu, log_var, z_input, z_recon):
+        loss_recon = chamfer_distance(output, input)
+        loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
+        loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
+        total = loss_recon + self.beta * loss_reg + self.alpha * self.wu_alpha * loss_lr
+        return total, loss_recon.detach(), (self.beta * loss_reg).detach(), (self.alpha * self.wu_alpha * loss_lr).detach()

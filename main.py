@@ -203,8 +203,9 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
         
         if dataset_name == 'pinwheel' or dataset_name == 'chessboard':
             data_type = '1d'
-        #visualize, save_img = (True, True) if ((epoch == (epochs-1)) or ((epoch & (epoch - 1)) == 0)) else (False, False)
-        visualize, save_img = (True, True) if (epoch == (epochs-1)) else (False, False)
+        # Set 데이터(setvae, setlrvae)는 2D 이미지 시각화/저장 비활성화
+        is_set_model = getattr(model, 'data_type', None) == 'set'
+        visualize, save_img = (True, True) if ((epoch == (epochs-1)) and not is_set_model) else (False, False)
         loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, save_img=save_img, visualize=visualize, data_type=data_type)
 
         # eval() 반환은 이미 배치 평균이므로, 추가 나눗셈 없이 그대로 기록
@@ -387,6 +388,56 @@ def run_experiment(config_path):
                         epochs=common_params['exp_epochs'],
                         batch_size=common_params['batch_size'],
                         dataset_name=common_params['exp_data'],
+                        logfilename=logfilename,
+                        resultname=resultname,
+                        pt_param=common_params.get('pt_param', None),
+                        num_mc_samples=model_params.get('num_mc_samples', 1),
+                        grad_clip=common_params.get('grad_clip', None)
+                    )
+
+    elif exp_type == 'setvae':
+        for beta in model_params.get('beta_list', [1.0]):
+            for i in range(common_params['niter']):
+                model = Model.SetVAE(
+                    beta=beta,
+                    latent_channel=model_params.get('latent_channel', 128),
+                    num_points=model_params.get('num_points', 2048),
+                    encoder_hidden=model_params.get('encoder_hidden', [128,256,512]),
+                    decoder_hidden=model_params.get('decoder_hidden', [512,256,128]),
+                    dataset='shapenet',
+                    pool_type=model_params.get('pool_type', 'max'),
+                )
+                train_and_test(
+                    model,
+                    epochs=common_params['exp_epochs'],
+                    batch_size=common_params['batch_size'],
+                    dataset_name=common_params.get('exp_data', 'shapenet'),
+                    logfilename=logfilename,
+                    resultname=resultname,
+                    pt_param=common_params.get('pt_param', None),
+                    num_mc_samples=model_params.get('num_mc_samples', 1),
+                    grad_clip=common_params.get('grad_clip', None)
+                )
+
+    elif exp_type == 'setlrvae':
+        for alpha in model_params.get('alpha_list', [0.01]):
+            for beta in model_params.get('beta_list', [1.0]):
+                for i in range(common_params['niter']):
+                    model = Model.SetLRVAE(
+                        alpha=alpha,
+                        beta=beta,
+                        latent_channel=model_params.get('latent_channel', 128),
+                        num_points=model_params.get('num_points', 2048),
+                        encoder_hidden=model_params.get('encoder_hidden', [128,256,512]),
+                        decoder_hidden=model_params.get('decoder_hidden', [512,256,128]),
+                        dataset='shapenet',
+                        pool_type=model_params.get('pool_type', 'max'),
+                    )
+                    train_and_test(
+                        model,
+                        epochs=common_params['exp_epochs'],
+                        batch_size=common_params['batch_size'],
+                        dataset_name=common_params.get('exp_data', 'shapenet'),
                         logfilename=logfilename,
                         resultname=resultname,
                         pt_param=common_params.get('pt_param', None),

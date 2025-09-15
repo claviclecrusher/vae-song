@@ -3,6 +3,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import math # math 모듈 임포트 추가
+import os
+import glob
 
 # --- 가중치 생성 헬퍼 함수 ---
 def _generate_weights_from_pattern(pattern, num_targets, K=None, seed=None):
@@ -563,8 +565,103 @@ def load_dataset(dataset_name, **kwargs):
             pattern='uniform', # 테스트는 항상 균일 분포
             seed=seed # 테스트 시드를 따로 주지 않으면 훈련과 같은 시드를 사용하여 재현성 높임
         )
+    elif dataset_name.startswith('shapenet'):
+        # ShapeNet point cloud dataset for SetVAE
+        # kwargs:
+        # - shapenet_root: root directory containing train/test npz files
+        # - category: optional category name filter (e.g., 'airplane')
+        # - num_points: number of points to sample per shape
+        # Expected file formats per sample:
+        #   *.npz with key 'points' of shape [N,3], or *.npy [N,3], or *.txt lines of 'x y z'
+        shapenet_root = kwargs.get('shapenet_root', os.path.join('dataset', 'shapenet'))
+        category = kwargs.get('category', None)
+        num_points = kwargs.get('num_points', 2048)
+        train_dataset = ShapeNetPointCloudDataset(shapenet_root, split='train', category=category, num_points=num_points)
+        test_dataset = ShapeNetPointCloudDataset(shapenet_root, split='test', category=category, num_points=num_points)
     else:
         print(dataset_name, "is not implemented")
         raise NotImplementedError
     
     return train_dataset, test_dataset
+
+
+class ShapeNetPointCloudDataset(Dataset):
+    """
+    Generic ShapeNet-like point cloud dataset loader.
+    Directory structure expected:
+        <root>/train/**/*.npz|.npy|.txt
+        <root>/test/**/*.npz|.npy|.txt
+    Each file should represent one shape with N x 3 points.
+    Optionally filter by category (substring match in path).
+    """
+    def __init__(self, root, split='train', category=None, num_points=2048):
+        super().__init__()
+        self.root = root
+        self.split = split
+        self.category = category
+        self.num_points = num_points
+
+        split_dir = os.path.join(root, split)
+        if not os.path.isdir(split_dir):
+            raise FileNotFoundError(f"ShapeNet split directory not found: {split_dir}")
+
+        patterns = [
+            os.path.join(split_dir, '**', '*.npz'),
+            os.path.join(split_dir, '**', '*.npy'),
+            os.path.join(split_dir, '**', '*.txt'),
+        ]
+        files = []
+        for p in patterns:
+            files.extend(glob.glob(p, recursive=True))
+
+        if category is not None:
+            files = [f for f in files if category.lower() in f.lower()]
+
+        if len(files) == 0:
+            raise FileNotFoundError(f"No point cloud files found under {split_dir} (category={category}).")
+
+        self.files = sorted(files)
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        path = self.files[idx]
+        points = self._load_points(path)
+        points = self._resample(points, self.num_points)
+        points = torch.from_numpy(points).float()  # [N, 3]
+        # dummy label: not used for reconstruction
+        return points, torch.tensor(0, dtype=torch.long)
+
+    def _load_points(self, path):
+        ext = os.path.splitext(path)[1].lower()
+        if ext == '.npz':
+            data = np.load(path)
+            # try common keys
+            for k in ['points', 'pc', 'pos', 'xyz']:
+                if k in data:
+                    pts = data[k]
+                    break
+            else:
+                raise KeyError(f"No 'points' array found in {path}")
+        elif ext == '.npy':
+            pts = np.load(path)
+        elif ext == '.txt':
+            pts = np.loadtxt(path).astype(np.float32)
+        else:
+            raise ValueError(f"Unsupported file extension: {ext}")
+
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            raise ValueError(f"Point array must be [N,3], got {pts.shape} from {path}")
+        return pts.astype(np.float32)
+
+    def _resample(self, pts, num_points):
+        N = pts.shape[0]
+        if N == num_points:
+            return pts
+        if N > num_points:
+            idx = np.random.choice(N, num_points, replace=False)
+            return pts[idx]
+        # N < num_points: pad by random repeat
+        idx = np.random.choice(N, num_points - N, replace=True)
+        return np.concatenate([pts, pts[idx]], axis=0)
