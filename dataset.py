@@ -601,24 +601,34 @@ class ShapeNetPointCloudDataset(Dataset):
         self.category = category
         self.num_points = num_points
 
-        split_dir = os.path.join(root, split)
-        if not os.path.isdir(split_dir):
-            raise FileNotFoundError(f"ShapeNet split directory not found: {split_dir}")
+        # Expected structure:
+        #   <root>/<class_name>/{train|test|val}/**/*.(npz|npy|txt)
+        if not os.path.isdir(root):
+            raise FileNotFoundError(f"ShapeNet root directory not found: {root}")
 
-        patterns = [
-            os.path.join(split_dir, '**', '*.npz'),
-            os.path.join(split_dir, '**', '*.npy'),
-            os.path.join(split_dir, '**', '*.txt'),
-        ]
-        files = []
-        for p in patterns:
-            files.extend(glob.glob(p, recursive=True))
-
+        # Collect class directories
+        class_dirs = [os.path.join(root, d) for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
         if category is not None:
-            files = [f for f in files if category.lower() in f.lower()]
+            class_dirs = [d for d in class_dirs if os.path.basename(d).lower().find(category.lower()) != -1]
+
+        files = []
+        for cdir in class_dirs:
+            split_dir = os.path.join(cdir, split)
+            if not os.path.isdir(split_dir):
+                continue
+            patterns = [
+                os.path.join(split_dir, '**', '*.npz'),
+                os.path.join(split_dir, '**', '*.npy'),
+                os.path.join(split_dir, '**', '*.txt'),
+            ]
+            for p in patterns:
+                files.extend(glob.glob(p, recursive=True))
 
         if len(files) == 0:
-            raise FileNotFoundError(f"No point cloud files found under {split_dir} (category={category}).")
+            example = os.path.join(root, 'airplane', split)
+            raise FileNotFoundError(
+                f"No point cloud files found. Expected structure like: {example}/xxx.npy (or .npz/.txt)."
+            )
 
         self.files = sorted(files)
 

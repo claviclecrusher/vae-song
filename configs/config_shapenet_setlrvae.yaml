@@ -1,0 +1,25 @@
+experiment_type: setlrvae
+common_params:
+  niter: 1
+  exp_epochs: 100
+  batch_size: 16
+  exp_data: shapenet
+  logfilename: log_setlrvae.csv
+  resultname: result_setlrvae
+  grad_clip: null
+  dataset_params:
+    shapenet_root: /mnt/backup/song/dataset/shapenet/ShapeNetCore.v2.PC15k   # 로컬 경로로 수정하세요
+    category: null
+    num_points: 2048
+model_params:
+  alpha_list: [0.1]
+  beta_list: [0.2]
+  latent_channel: 128
+  num_points: 2048
+  encoder_hidden: [128, 256, 512]
+  decoder_hidden: [512, 256, 128]
+  pool_type: max
+  num_mc_samples: 1
+  residual_connection: false
+  hchans: []
+

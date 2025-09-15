@@ -10,6 +10,11 @@ import model as Model
 from utils import pca_visualization
 from utils import apply_grad_clip
 import utils
+from absl import flags
+import sys
+ 
+# dataset config forwarding
+DATASET_PARAMS = {}
 import dataset
 import yaml
 import random
@@ -115,7 +120,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     # 데이터 타입 기본값 설정 (2d: 이미지), 필요 시 덮어쓰기
     data_type = '2d'
     
-    train_dataset, test_dataset = dataset.load_dataset(dataset_name)
+    train_dataset, test_dataset = dataset.load_dataset(dataset_name, **DATASET_PARAMS)
 
     test_shuffle = True if (dataset_name == 'pinwheel' or dataset_name == 'chessboard') else False
     
@@ -179,14 +184,27 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
             loss, loss_recon, loss_reg, loss_lr = model.loss(x, *result)
 
             optimizer.zero_grad()
-            loss_lr.backward(retain_graph=True)
-            # encoder의 gradient에 weight lam 곱하기
-            lam = 0.0001 # 1: 기존 방법(oversmoothing), 0: encoder에는 lr 적용 안함(collapsed)
-            for param in model.encoder.parameters():
-                if param.grad is not None:
-                    param.grad *= lam
-            loss_reg.backward(retain_graph=True)
-            loss_recon.backward()
+            did_backward = False
+            # latent recon term (may be detached for some models like SetVAE)
+            if hasattr(loss_lr, 'requires_grad') and loss_lr.requires_grad:
+                loss_lr.backward(retain_graph=True)
+                did_backward = True
+                # encoder의 gradient에 weight lam 곱하기
+                lam = 0.0001 # 1: 기존 방법(oversmoothing), 0: encoder에는 lr 적용 안함(collapsed)
+                for param in model.encoder.parameters():
+                    if param.grad is not None:
+                        param.grad *= lam
+            # regularization term (KL); may be detached depending on model
+            if hasattr(loss_reg, 'requires_grad') and loss_reg.requires_grad:
+                loss_reg.backward(retain_graph=True)
+                did_backward = True
+            # reconstruction term; for set models, this is chamfer and requires grad
+            if hasattr(loss_recon, 'requires_grad') and loss_recon.requires_grad:
+                loss_recon.backward()
+                did_backward = True
+            # Fallback: if none required grad, backprop total loss once
+            if not did_backward:
+                loss.backward()
             #loss.backward()
             apply_grad_clip(model, grad_clip)
             optimizer.step()
@@ -301,6 +319,9 @@ def run_experiment(config_path):
     else:
         resultname=common_params['resultname']
     
+    global DATASET_PARAMS
+    DATASET_PARAMS = common_params.get('dataset_params', {})
+
     if exp_type == 'lidvae':
         for beta in model_params['beta_list']:
             for il in model_params['il_list']:
@@ -446,5 +467,11 @@ def run_experiment(config_path):
                     )
 
 if __name__ == "__main__":
-    config_path = "./configs/config_pinwheel.yaml"
-    run_experiment(config_path)
+
+    FLAGS = flags.FLAGS
+    flags.DEFINE_string('config', './configs/config_shapenet_setvae.yaml', 'config file path')
+
+    if not FLAGS.is_parsed():
+        FLAGS(sys.argv)
+
+    run_experiment(FLAGS.config)

@@ -1,0 +1,25 @@
+experiment_type: setvae
+common_params:
+  niter: 1
+  exp_epochs: 100
+  batch_size: 16
+  exp_data: shapenet
+  logfilename: log_setvae.csv
+  resultname: result_setvae
+  grad_clip: null
+  # dataset params will be forwarded to dataset.load_dataset
+  dataset_params:
+    shapenet_root: /mnt/backup/song/dataset/shapenet/ShapeNetCore.v2.PC15k  # 로컬 경로로 수정하세요
+    category: null     # 예: airplane, car, chair 등. null이면 전체 사용
+    num_points: 2048
+model_params:
+  beta_list: [0.2]
+  latent_channel: 128
+  num_points: 2048
+  encoder_hidden: [128, 256, 512]
+  decoder_hidden: [512, 256, 128]
+  pool_type: max
+  num_mc_samples: 1
+  residual_connection: false
+  hchans: []
+

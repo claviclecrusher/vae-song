@@ -24,6 +24,12 @@ conda activate lrvae
 pip install -r requirements.txt
 ```
 
+
+# data download (shapenet)
+```bash
+gdown --fuzzy https://drive.google.com/file/d/1sw9gdk_igiyyt7MqALyxZhRrtPvAn0sX/view?usp=drive_link
+```
+
 ## Usage
 To run a default experiment on the Pinwheel dataset:
 ```bash
