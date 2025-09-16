@@ -29,4 +29,5 @@ model_params:
   num_decoder_layers: 2
   ff_dim: 512
   attn_dropout: 0.0
+  wu_strat: linear
 

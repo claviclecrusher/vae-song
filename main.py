@@ -171,7 +171,7 @@ def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_im
         
     return loss_total / len(loader_test), loss_recon_total / len(loader_test), loss_reg_total / len(loader_test), loss_lr_total / len(loader_test)
 
-def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None, num_mc_samples=1, grad_clip=None):
+def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", dataset_name='mnist', logfilename='log.csv', resultname='res', pt_param=None, num_mc_samples=1, grad_clip=None, wu_strat='linear'):
     # 데이터 타입 기본값 설정 (2d: 이미지), 필요 시 덮어쓰기
     data_type = '2d'
     
@@ -224,7 +224,7 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     # Main train loop
     for epoch in tqdm(range(epochs), desc=name):
         model.train()
-        model.warmup(epoch, epochs)
+        model.warmup(epoch=epoch, max_epoch=epochs, wu_strat=wu_strat)
         loss_total = 0.0
         loss_recon_total = 0.0
         loss_reg_total = 0.0
@@ -473,7 +473,8 @@ def run_experiment(config_path):
                         resultname=resultname,
                         pt_param=common_params.get('pt_param', None),
                         num_mc_samples=model_params.get('num_mc_samples', 1),
-                        grad_clip=common_params.get('grad_clip', None)
+                        grad_clip=common_params.get('grad_clip', None),
+                        wu_strat=common_params.get('wu_strat', 'linear')
                     )
 
     elif exp_type == 'setvae':
@@ -487,6 +488,13 @@ def run_experiment(config_path):
                     decoder_hidden=model_params.get('decoder_hidden', [512,256,128]),
                     dataset='shapenet',
                     pool_type=model_params.get('pool_type', 'max'),
+                    use_attention=model_params.get('use_attention', True),
+                    d_model=model_params.get('d_model', 256),
+                    num_heads=model_params.get('num_heads', 4),
+                    num_encoder_layers=model_params.get('num_encoder_layers', 2),
+                    num_decoder_layers=model_params.get('num_decoder_layers', 2),
+                    ff_dim=model_params.get('ff_dim', 512),
+                    attn_dropout=model_params.get('attn_dropout', 0.0)
                 )
                 train_and_test(
                     model,
@@ -513,6 +521,13 @@ def run_experiment(config_path):
                         decoder_hidden=model_params.get('decoder_hidden', [512,256,128]),
                         dataset='shapenet',
                         pool_type=model_params.get('pool_type', 'max'),
+                        use_attention=model_params.get('use_attention', True),
+                        d_model=model_params.get('d_model', 256),
+                        num_heads=model_params.get('num_heads', 4),
+                        num_encoder_layers=model_params.get('num_encoder_layers', 2),
+                        num_decoder_layers=model_params.get('num_decoder_layers', 2),
+                        ff_dim=model_params.get('ff_dim', 512),
+                        attn_dropout=model_params.get('attn_dropout', 0.0)
                     )
                     train_and_test(
                         model,
@@ -523,7 +538,8 @@ def run_experiment(config_path):
                         resultname=resultname,
                         pt_param=common_params.get('pt_param', None),
                         num_mc_samples=model_params.get('num_mc_samples', 1),
-                        grad_clip=common_params.get('grad_clip', None)
+                        grad_clip=common_params.get('grad_clip', None),
+                        wu_strat=common_params.get('wu_strat', 'linear')
                     )
 
 if __name__ == "__main__":
