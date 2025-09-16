@@ -10,6 +10,7 @@ class VAE(torch.nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
         self._initialize_weights()
+        self.last_kl_loss = 0.0  # 마지막 KL loss 값 저장
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -56,6 +57,9 @@ class VAE(torch.nn.Module):
         elif wu_strat == 'repeat_linear':
             if epoch >= start_epoch:
                 self.wu_alpha = min(1.0/((epoch%repeat_interval)+1), 1.0)
+        elif wu_strat == 'kl_adaptive':
+            if epoch >= start_epoch:
+                self.wu_alpha = 1 / (1 + math.exp(self.last_kl_loss-5)) # shifted sigmoid function: 0.0 to 1.0
         return True
 
 
@@ -606,6 +610,9 @@ class LRVAE(FlexibleVAE):
             logvar_zp = torch.log(((z_input - mu_zp) ** 2).mean(dim=1))
             loss_reg = loss_reg/2.0 + (-0.5 * (1 + logvar_zp - mu_zp**2 - logvar_zp.exp())).mean(dim=1).sum()/2.0
 
+        # KL loss 값을 저장 (detach하여 gradient 제거)
+        self.last_kl_loss = float(loss_reg.detach())
+
         return loss_recon + loss_reg * self.beta + loss_lr * self.alpha * self.wu_alpha, loss_recon, loss_reg * self.beta, loss_lr * self.alpha * self.wu_alpha
 
     #def loss_mc(self, input, output, mu, log_var, z_input, z_recon):
@@ -1099,5 +1106,9 @@ class SetLRVAE(SetVAE):
         loss_recon = chamfer_distance(output, input)
         loss_reg = (-0.5 * (1 + log_var - mu**2 - log_var.exp())).mean(dim=0).sum()
         loss_lr = ((z_input - z_recon) ** 2).mean(dim=0).sum()
+        
+        # KL loss 값을 저장 (detach하여 gradient 제거)
+        self.last_kl_loss = float(loss_reg.detach())
+        
         total = loss_recon + self.beta * loss_reg + self.alpha * self.wu_alpha * loss_lr
         return total, loss_recon.detach(), (self.beta * loss_reg).detach(), (self.alpha * self.wu_alpha * loss_lr).detach()
