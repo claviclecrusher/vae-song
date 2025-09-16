@@ -20,6 +20,13 @@ import yaml
 import random
 import numpy as np
 
+# For point cloud visualization
+try:
+    import open3d as o3d
+    HAS_OPEN3D = True
+except ImportError:
+    HAS_OPEN3D = False
+
 # 재현성을 위한 시드 고정
 SEED = 42
 random.seed(SEED)
@@ -32,6 +39,54 @@ def load_config(config_path):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
+
+def save_point_cloud(points, filepath):
+    """Save point cloud in .ply format."""
+    if HAS_OPEN3D:
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        o3d.io.write_point_cloud(filepath, pcd)
+    else:
+        print(f"Warning: open3d not available. Skipping {filepath}")
+
+def save_set_samples(model, loader_test, device, output_dir, name, epoch, n_samples=4):
+    """Save reconstruction and prior samples for SetVAE/SetLRVAE models."""
+    if not HAS_OPEN3D:
+        print("Warning: open3d not available. Skipping point cloud visualization.")
+        return
+    
+    model.eval()
+    os.makedirs(output_dir, exist_ok=True)
+    
+    with torch.no_grad():
+        # 1. Save reconstruction samples (4 samples)
+        print(f"Saving {n_samples} reconstruction samples...")
+        for i, (x, _) in enumerate(loader_test):
+            if i >= n_samples:
+                break
+            x = x.to(device)
+            result = model(x, latent_rand_sampling=False)  # Use mean for reconstruction
+            recon_points = result[0].cpu().numpy()  # [1, N, 3]
+            
+            # Save reconstruction
+            recon_path = os.path.join(output_dir, f"{name}_epoch{epoch}_recon_{i:02d}.ply")
+            save_point_cloud(recon_points[0], recon_path)
+            
+            # Save original for comparison
+            orig_path = os.path.join(output_dir, f"{name}_epoch{epoch}_orig_{i:02d}.ply")
+            save_point_cloud(x.cpu().numpy()[0], orig_path)
+        
+        # 2. Save prior samples (4 samples)
+        print(f"Saving {n_samples} prior samples...")
+        for i in range(n_samples):
+            z = torch.randn(1, model.latent_channel, device=device)
+            sample_points = model.decode(z).cpu().numpy()  # [1, N, 3]
+            
+            # Save prior sample
+            sample_path = os.path.join(output_dir, f"{name}_epoch{epoch}_prior_{i:02d}.ply")
+            save_point_cloud(sample_points[0], sample_path)
+    
+    print(f"Point cloud samples saved to: {output_dir}")
 
 def eval(model: Model.VAE, loader_test, device, epoch, name, resultname, save_img=True, visualize=True, data_type='2d'):
     model.eval() #
@@ -232,6 +287,11 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
             torch.save(
                 model.state_dict(), "./results/" + resultname + "/" + name + "/params/model_" + str(epoch) + ".pt"
             )
+            
+            # Save point cloud samples for SetVAE/SetLRVAE models
+            if is_set_model:
+                point_cloud_dir = os.path.join("./results", resultname, name, "point_clouds")
+                save_set_samples(model, loader_test, device, point_cloud_dir, name, epoch, n_samples=4)
 
     epoch = epochs
     #loss_total, loss_recon_total, loss_reg_total, loss_lr_total = eval(model, loader_test, device, epoch, name, resultname, visualize=True)
