@@ -59,7 +59,7 @@ class VAE(torch.nn.Module):
                 self.wu_alpha = min(1.0/((epoch%repeat_interval)+1), 1.0)
         elif wu_strat == 'kl_adaptive':
             if epoch >= start_epoch:
-                self.wu_alpha = 1 / (1 + math.exp(self.last_kl_loss-5)) # shifted sigmoid function: 0.0 to 1.0
+                self.wu_alpha = 1 / (1 + math.exp(self.last_kl_loss-5)) # shifted inverted sigmoid function: 0.0 to 1.0
         return True
 
 
