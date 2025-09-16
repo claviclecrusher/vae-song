@@ -33,8 +33,30 @@ class VAE(torch.nn.Module):
     def loss(self, *args):
         raise NotImplementedError
 
-    def warmup(self, epoch, amount=None):
-        return False
+    def warmup(self, epoch, max_epoch=None, wu_strat='linear', up_amount=None, start_epoch=0, repeat_interval=10):
+        # LR 모델이 아닌 경우 warmup 기능 비활성화
+        if not hasattr(self, 'wu_alpha'):
+            return False
+        
+        # LR 모델인 경우 warmup 로직 실행
+        if wu_strat == 'linear':
+            if epoch >= start_epoch:
+                if up_amount is None:
+                    self.wu_alpha = min(self.wu_alpha + 1.0/(max_epoch-start_epoch+1), 1.0)
+                else:
+                    self.wu_alpha = min(self.wu_alpha + up_amount, 1.0)
+        elif wu_strat == 'exponential':
+            if epoch >= start_epoch:
+                if up_amount is None: # exponential function 0.0 at start_epoch and 1.0 at max_epoch
+                    x = (epoch-start_epoch)*math.log(2)/(max_epoch-start_epoch)
+                    self.wu_alpha = max(min(math.exp(x)-1.0, 1.0), 0.0)
+                else:
+                    x = up_amount*(epoch-start_epoch)
+                    self.wu_alpha = max(min(math.exp(x)-1.0, 1.0), 0.0)
+        elif wu_strat == 'repeat_linear':
+            if epoch >= start_epoch:
+                self.wu_alpha = min(1.0/((epoch%repeat_interval)+1), 1.0)
+        return True
 
 
 
@@ -549,25 +571,6 @@ class LRVAE(FlexibleVAE):
         super(LRVAE, self).__init__(**kwargs)
         self.alpha = alpha
 
-    def warmup(self, epoch, max_epoch, wu_strat='linear', up_amount=None, start_epoch=0, repeat_interval=10):
-        if wu_strat == 'linear':
-            if epoch >= start_epoch:
-                if up_amount == None:
-                    self.wu_alpha = min(self.wu_alpha + 1.0/(max_epoch-start_epoch+1), 1.0)
-                else:
-                    self.wu_alpha = min(self.wu_alpha + up_amount, 1.0)
-        elif wu_strat == 'exponential':
-            if epoch >= start_epoch:
-                if up_amount == None: # exponential function 0.0 at start_epoch and 1.0 at max_epoch
-                    x = (epoch-start_epoch)*math.log(2)/(max_epoch-start_epoch)
-                    self.wu_alpha = max(min(math.exp(x)-1.0, 1.0), 0.0)
-                else:
-                    x = up_amount*(epoch-start_epoch)
-                    self.wu_alpha = max(min(math.exp(x)-1.0, 1.0), 0.0)
-        elif wu_strat == 'repeat_linear':
-            if epoch >= start_epoch:
-                self.wu_alpha = min(1.0/((epoch%repeat_interval)+1), 1.0)
-        return True
 
 
     #def loss(self, input, output, mu, log_var, z_input, z_recon, L=1):
@@ -1080,25 +1083,6 @@ class SetLRVAE(SetVAE):
         self.alpha = alpha
         self.wu_alpha = 0.0
 
-    def warmup(self, epoch, max_epoch, wu_strat='linear', up_amount=None, start_epoch=0, repeat_interval=10):
-        if wu_strat == 'linear':
-            if epoch >= start_epoch:
-                if up_amount is None:
-                    self.wu_alpha = min(self.wu_alpha + 1.0 / (max_epoch - start_epoch + 1), 1.0)
-                else:
-                    self.wu_alpha = min(self.wu_alpha + up_amount, 1.0)
-        elif wu_strat == 'exponential':
-            if epoch >= start_epoch:
-                if up_amount is None:
-                    x = (epoch - start_epoch) * math.log(2) / (max_epoch - start_epoch)
-                    self.wu_alpha = max(min(math.exp(x) - 1.0, 1.0), 0.0)
-                else:
-                    x = up_amount * (epoch - start_epoch)
-                    self.wu_alpha = max(min(math.exp(x) - 1.0, 1.0), 0.0)
-        elif wu_strat == 'repeat_linear':
-            if epoch >= start_epoch:
-                self.wu_alpha = min(1.0 / ((epoch % repeat_interval) + 1), 1.0)
-        return True
 
     def forward(self, input, latent_rand_sampling=True, L=1):
         mu, log_var = self.encode(input)
