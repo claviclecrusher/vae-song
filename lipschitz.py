@@ -20,10 +20,15 @@ DEFAULT_EMPTY_CELL_FILL_VALUE = -5.0 # Default value to fill empty cells in heat
 # --- Constants End ---
 
 # --- train_model function definition ---
-def train_model(model, loader, epochs, lr, device, grad_clip=None):
+def train_model(model, loader, epochs, lr, device, grad_clip=None, wu_strat='linear', wu_start_epoch=0, wu_up_amount=None, wu_repeat_interval=10):
     model.to(device).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     for epoch in tqdm(range(epochs), desc="Training Model"):
+        # Apply warmup
+        model.warmup(epoch=epoch, max_epoch=epochs, wu_strat=wu_strat, 
+                    up_amount=wu_up_amount, start_epoch=wu_start_epoch, 
+                    repeat_interval=wu_repeat_interval)
+        
         for X, _ in loader:
             X = X.to(device)
             optimizer.zero_grad()
@@ -153,6 +158,17 @@ def main():
     parser.add_argument('--grad_clip_norm_type', type=float, default=2.0)
     parser.add_argument('--grad_clip_value', type=float, default=1.0)
 
+    # warmup options
+    parser.add_argument('--wu_strat', type=str, default='linear', 
+                        choices=['linear', 'exponential', 'repeat_linear', 'kl_adaptive'],
+                        help='Warmup strategy for LRVAE alpha')
+    parser.add_argument('--wu_start_epoch', type=int, default=0, 
+                        help='Epoch to start warmup')
+    parser.add_argument('--wu_up_amount', type=float, default=None,
+                        help='Manual warmup increment amount (overrides default calculation)')
+    parser.add_argument('--wu_repeat_interval', type=int, default=10,
+                        help='Repeat interval for repeat_linear warmup strategy')
+
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -207,7 +223,10 @@ def main():
         'clip_value': args.grad_clip_value,
     }
 
-    train_model(model, train_loader, args.epochs, args.lr, args.device, grad_clip=grad_clip_cfg)
+    train_model(model, train_loader, args.epochs, args.lr, args.device, 
+                grad_clip=grad_clip_cfg, wu_strat=args.wu_strat, 
+                wu_start_epoch=args.wu_start_epoch, wu_up_amount=args.wu_up_amount, 
+                wu_repeat_interval=args.wu_repeat_interval)
     print("Model training complete.")
 
     # 3. Test Data Generation (Uniform)
