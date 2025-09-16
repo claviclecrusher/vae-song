@@ -937,6 +937,50 @@ class SetEncoder(nn.Module):
         return mu, log_var
 
 
+class SetEncoderAttn(nn.Module):
+    def __init__(self, point_dim=3, latent_dim=128, d_model=256, num_heads=4, num_layers=2, ff_dim=512, dropout=0.0):
+        super().__init__()
+        self.input_proj = nn.Linear(point_dim, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=num_heads, dim_feedforward=ff_dim, dropout=dropout, batch_first=True)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.pool = nn.AdaptiveMaxPool1d(1)
+        self.fc_mu = nn.Linear(d_model, latent_dim)
+        self.fc_logvar = nn.Linear(d_model, latent_dim)
+
+    def forward(self, points):
+        # points: [B, N, 3]
+        x = self.input_proj(points)  # [B, N, d_model]
+        x = self.encoder(x)          # [B, N, d_model]
+        # permutation-invariant pooling (max)
+        x = x.transpose(1, 2)        # [B, d_model, N]
+        s = self.pool(x).squeeze(-1) # [B, d_model]
+        mu = self.fc_mu(s)
+        log_var = self.fc_logvar(s)
+        return mu, log_var
+
+
+class SetDecoderAttn(nn.Module):
+    def __init__(self, latent_dim=128, num_points=2048, d_model=256, num_heads=4, num_layers=2, ff_dim=512, dropout=0.0):
+        super().__init__()
+        self.num_points = num_points
+        self.query_embed = nn.Parameter(torch.randn(num_points, d_model) * 0.02)
+        self.latent_to_token = nn.Linear(latent_dim, d_model)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=num_heads, dim_feedforward=ff_dim, dropout=dropout, batch_first=True)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.output_proj = nn.Linear(d_model, 3)
+
+    def forward(self, z):
+        # z: [B, D]
+        B, D = z.shape
+        # make memory (context) token from latent
+        memory = self.latent_to_token(z).unsqueeze(1)  # [B, 1, d_model]
+        # queries
+        queries = self.query_embed.unsqueeze(0).expand(B, -1, -1)  # [B, N, d_model]
+        # transformer decode: queries attend to memory
+        x = self.decoder(tgt=queries, memory=memory)  # [B, N, d_model]
+        points = self.output_proj(x)  # [B, N, 3]
+        return points
+
 class SetDecoder(nn.Module):
     def __init__(self, latent_dim=128, num_points=2048, hidden_dims=[512, 256, 128], point_dim=3):
         super().__init__()
@@ -982,6 +1026,13 @@ class SetVAE(VAE):
         is_log_mse=False,  # unused for set, kept for API compat
         dataset='shapenet',
         pool_type='max',
+        use_attention=True,
+        d_model=256,
+        num_heads=4,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        ff_dim=512,
+        attn_dropout=0.0,
     ):
         super(SetVAE, self).__init__()
         self.latent_channel = latent_channel
@@ -990,8 +1041,14 @@ class SetVAE(VAE):
         self.num_points = num_points
         self.data_type = 'set'  # to disable 2D image visualization
 
-        self.encoder = SetEncoder(point_dim=3, hidden_dims=encoder_hidden, latent_dim=latent_channel, pool_type=pool_type)
-        self.decoder = SetDecoder(latent_dim=latent_channel, num_points=num_points, hidden_dims=decoder_hidden, point_dim=3)
+        if use_attention:
+            self.encoder = SetEncoderAttn(point_dim=3, latent_dim=latent_channel, d_model=d_model, num_heads=num_heads,
+                                          num_layers=num_encoder_layers, ff_dim=ff_dim, dropout=attn_dropout)
+            self.decoder = SetDecoderAttn(latent_dim=latent_channel, num_points=num_points, d_model=d_model, num_heads=num_heads,
+                                          num_layers=num_decoder_layers, ff_dim=ff_dim, dropout=attn_dropout)
+        else:
+            self.encoder = SetEncoder(point_dim=3, hidden_dims=encoder_hidden, latent_dim=latent_channel, pool_type=pool_type)
+            self.decoder = SetDecoder(latent_dim=latent_channel, num_points=num_points, hidden_dims=decoder_hidden, point_dim=3)
 
     def encode(self, input):
         return self.encoder(input)

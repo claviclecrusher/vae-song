@@ -2,7 +2,7 @@ experiment_type: setvae
 common_params:
   niter: 1
   exp_epochs: 100
-  batch_size: 16
+  batch_size: 256
   exp_data: shapenet
   logfilename: log_setvae.csv
   resultname: result_setvae
@@ -13,7 +13,7 @@ common_params:
     category: null     # 예: airplane, car, chair 등. null이면 전체 사용
     num_points: 2048
 model_params:
-  beta_list: [0.2]
+  beta_list: [0.001]
   latent_channel: 128
   num_points: 2048
   encoder_hidden: [128, 256, 512]
@@ -22,4 +22,11 @@ model_params:
   num_mc_samples: 1
   residual_connection: false
   hchans: []
+  use_attention: true
+  d_model: 256
+  num_heads: 4
+  num_encoder_layers: 2
+  num_decoder_layers: 2
+  ff_dim: 512
+  attn_dropout: 0.0
 
