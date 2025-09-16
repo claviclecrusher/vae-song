@@ -20,7 +20,7 @@ DEFAULT_EMPTY_CELL_FILL_VALUE = -5.0 # Default value to fill empty cells in heat
 # --- Constants End ---
 
 # --- train_model function definition ---
-def train_model(model, loader, epochs, lr, device, grad_clip=None, wu_strat='linear', wu_start_epoch=0, wu_up_amount=None, wu_repeat_interval=10):
+def train_model(model, loader, epochs, lr, device, grad_clip=None, wu_strat='linear', wu_start_epoch=0, wu_up_amount=None, wu_repeat_interval=10, experiment_logger=None):
     model.to(device).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     for epoch in tqdm(range(epochs), desc="Training Model"):
@@ -28,6 +28,10 @@ def train_model(model, loader, epochs, lr, device, grad_clip=None, wu_strat='lin
         model.warmup(epoch=epoch, max_epoch=epochs, wu_strat=wu_strat, 
                     up_amount=wu_up_amount, start_epoch=wu_start_epoch, 
                     repeat_interval=wu_repeat_interval)
+        
+        # Alpha warmup 값 로깅 (LR 모델인 경우)
+        if experiment_logger and hasattr(model, 'wu_alpha'):
+            experiment_logger.log_alpha_value(epoch, model.wu_alpha)
         
         for X, _ in loader:
             X = X.to(device)
@@ -223,10 +227,44 @@ def main():
         'clip_value': args.grad_clip_value,
     }
 
+    # 실험 로거 초기화 (utils.py에서 import 필요)
+    from utils import create_experiment_logger
+    experiment_logger = create_experiment_logger(args.output_dir, f"LRVAE_alpha{args.alpha}_beta{args.beta}")
+    
+    # 하이퍼파라미터 로깅
+    experiment_logger.log_hyperparameters(
+        alpha=args.alpha,
+        beta=args.beta,
+        epochs=args.epochs,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        device=args.device,
+        K=args.K,
+        K_z=args.K_z,
+        std=args.std,
+        train_total_samples=args.train_total_samples,
+        test_total_samples=args.test_total_samples,
+        distribution_pattern=args.distribution_pattern,
+        seed=args.seed,
+        latent_dim=actual_latent_dim,
+        hidden_channels=args.hidden_channels,
+        num_training_components=args.num_training_components,
+        z_min=args.z_min,
+        z_max=args.z_max,
+        wu_strat=args.wu_strat,
+        wu_start_epoch=args.wu_start_epoch,
+        wu_up_amount=args.wu_up_amount,
+        wu_repeat_interval=args.wu_repeat_interval,
+        grad_clip_enabled=args.grad_clip_enabled
+    )
+    
+    # 모델 정보 로깅
+    experiment_logger.log_model_info(model)
+
     train_model(model, train_loader, args.epochs, args.lr, args.device, 
                 grad_clip=grad_clip_cfg, wu_strat=args.wu_strat, 
                 wu_start_epoch=args.wu_start_epoch, wu_up_amount=args.wu_up_amount, 
-                wu_repeat_interval=args.wu_repeat_interval)
+                wu_repeat_interval=args.wu_repeat_interval, experiment_logger=experiment_logger)
     print("Model training complete.")
 
     # 3. Test Data Generation (Uniform)
@@ -390,8 +428,21 @@ def main():
     else:
         exp_lip_df.to_csv(exp_lip_file, index=False)
     
+    # 평가 메트릭 로깅
+    experiment_logger.log_evaluation_metrics(
+        kl=avg_kl, 
+        bi_lipschitz=avg_bi_lips
+    )
+    
+    # Alpha warmup 요약 로깅
+    experiment_logger.log_alpha_warmup_summary(args.wu_strat)
+    
+    # 로그 파일 마무리
+    experiment_logger.finalize_log()
+    
     print(f"Experiment complete. Results saved to {args.output_dir}")
     print(f"Overall metrics - KL: {avg_kl:.4f}, Bi-Lipschitz L(z): {avg_bi_lips:.4f}")
+    print(f"Experiment log saved to: {experiment_logger.log_file}")
 
 if __name__ == '__main__':
     main()

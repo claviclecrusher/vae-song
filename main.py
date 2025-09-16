@@ -221,10 +221,31 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     writer = SummaryWriter(log_dir="runs/" + name)    
     os.makedirs(f"./results/{resultname}/{name}/params/", exist_ok=True)
 
+    # 실험 로거 초기화
+    experiment_logger = utils.create_experiment_logger(f"./results/{resultname}/{name}", name)
+    
+    # 하이퍼파라미터 로깅
+    experiment_logger.log_hyperparameters(
+        epochs=epochs,
+        batch_size=batch_size,
+        device=device,
+        dataset_name=dataset_name,
+        num_mc_samples=num_mc_samples,
+        wu_strat=wu_strat,
+        grad_clip=grad_clip
+    )
+    
+    # 모델 정보 로깅
+    experiment_logger.log_model_info(model)
+
     # Main train loop
     for epoch in tqdm(range(epochs), desc=name):
         model.train()
         model.warmup(epoch=epoch, max_epoch=epochs, wu_strat=wu_strat)
+        
+        # Alpha warmup 값 로깅 (LR 모델인 경우)
+        if hasattr(model, 'wu_alpha'):
+            experiment_logger.log_alpha_value(epoch, model.wu_alpha)
         loss_total = 0.0
         loss_recon_total = 0.0
         loss_reg_total = 0.0
@@ -349,6 +370,22 @@ def train_and_test(model: Model.VAE, epochs=100, batch_size=128, device="cuda", 
     )
     au, kl, mi, nll, mvar = utils.measure_pc_runmodel(model, loader_eval, device)
     print('| au:', au, '| kl:', kl, '| mi:', mi, '| nll:', nll)
+
+    # 평가 메트릭 로깅
+    experiment_logger.log_evaluation_metrics(
+        au=au, kl=kl, mi=mi, nll=nll, 
+        mean_var=mvar, fid=fid if isinstance(fid, (int, float)) else None,
+        vloss=loss_total/len(loader_test) if 'loss_total' in locals() else None,
+        vlrec=loss_recon_total/len(loader_test) if 'loss_recon_total' in locals() else None,
+        vlreg=loss_reg_total/len(loader_test) if 'loss_reg_total' in locals() else None,
+        vllr=loss_lr_total/len(loader_test) if 'loss_lr_total' in locals() else None
+    )
+    
+    # Alpha warmup 요약 로깅
+    experiment_logger.log_alpha_warmup_summary(wu_strat)
+    
+    # 로그 파일 마무리
+    experiment_logger.finalize_log()
 
     utils.log_unified_dict("./log/", {'name':name, 'dataset_name':dataset_name, 'epoch':epoch+1, 'fid':fid, 'au':au, 'kl':kl, 'mi':mi, 'nll':nll, 'vloss':loss_total/len(loader_test), \
                                     'vlrec':loss_recon_total/len(loader_test), 'vlreg':loss_reg_total/len(loader_test), 'vllr':loss_lr_total/len(loader_test), \

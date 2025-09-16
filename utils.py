@@ -623,3 +623,124 @@ def plot_2d_histogram(X, bins=16, title='2D Data Distribution', filepath='histog
     plt.close()
 
     return (actual_xmin, actual_xmax, actual_ymin, actual_ymax) # 실제 범위 반환
+
+
+# ========================================================================================
+# 실험 로깅 함수들
+# ========================================================================================
+
+import json
+from datetime import datetime
+
+class ExperimentLogger:
+    """실험 결과 로깅을 위한 클래스"""
+    
+    def __init__(self, result_dir, experiment_name):
+        self.result_dir = result_dir
+        self.experiment_name = experiment_name
+        self.log_file = os.path.join(result_dir, "log.txt")
+        self.start_time = datetime.now()
+        self.alpha_history = []  # warmup alpha 값들을 저장
+        
+        # 로그 파일 초기화
+        os.makedirs(result_dir, exist_ok=True)
+        with open(self.log_file, 'w') as f:
+            f.write(f"=== Experiment Log: {experiment_name} ===\n")
+            f.write(f"Start Time: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    
+    def log_hyperparameters(self, **hyperparams):
+        """하이퍼파라미터를 로그 파일에 기록"""
+        with open(self.log_file, 'a') as f:
+            f.write("=== Hyperparameters ===\n")
+            for key, value in hyperparams.items():
+                f.write(f"{key}: {value}\n")
+            f.write("\n")
+    
+    def log_model_info(self, model):
+        """모델 정보를 로그 파일에 기록"""
+        with open(self.log_file, 'a') as f:
+            f.write("=== Model Information ===\n")
+            f.write(f"Model Type: {type(model).__name__}\n")
+            
+            # 모델별 특성 기록
+            if hasattr(model, 'beta'):
+                f.write(f"Beta: {model.beta}\n")
+            if hasattr(model, 'alpha'):
+                f.write(f"Alpha: {model.alpha}\n")
+            if hasattr(model, 'latent_channel'):
+                f.write(f"Latent Dimension: {model.latent_channel}\n")
+            if hasattr(model, 'data_type'):
+                f.write(f"Data Type: {model.data_type}\n")
+            if hasattr(model, 'num_points'):
+                f.write(f"Number of Points: {model.num_points}\n")
+            
+            # 파라미터 수 계산
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            f.write(f"Total Parameters: {total_params:,}\n")
+            f.write(f"Trainable Parameters: {trainable_params:,}\n")
+            f.write("\n")
+    
+    def log_alpha_value(self, epoch, alpha_value):
+        """Alpha warmup 값을 기록 (adaptive용)"""
+        self.alpha_history.append((epoch, alpha_value))
+    
+    def log_evaluation_metrics(self, au=None, kl=None, mi=None, nll=None, **other_metrics):
+        """평가 메트릭을 로그 파일에 기록"""
+        with open(self.log_file, 'a') as f:
+            f.write("=== Evaluation Metrics ===\n")
+            if au is not None:
+                f.write(f"AU (Active Units): {au:.6f}\n")
+            if kl is not None:
+                f.write(f"KL Divergence: {kl:.6f}\n")
+            if mi is not None:
+                f.write(f"MI (Mutual Information): {mi:.6f}\n")
+            if nll is not None:
+                f.write(f"NLL (Negative Log-Likelihood): {nll:.6f}\n")
+            
+            # 기타 메트릭들
+            for key, value in other_metrics.items():
+                f.write(f"{key}: {value:.6f}\n")
+            f.write("\n")
+    
+    def log_alpha_warmup_summary(self, wu_strat):
+        """Alpha warmup 요약 정보를 기록"""
+        if not self.alpha_history:
+            return
+            
+        with open(self.log_file, 'a') as f:
+            f.write("=== Alpha Warmup Summary ===\n")
+            f.write(f"Warmup Strategy: {wu_strat}\n")
+            
+            if wu_strat == 'kl_adaptive':
+                # KL adaptive의 경우 epoch별 alpha 평균 계산
+                alpha_values = [alpha for _, alpha in self.alpha_history]
+                avg_alpha = sum(alpha_values) / len(alpha_values)
+                final_alpha = alpha_values[-1] if alpha_values else 0.0
+                
+                f.write(f"Average Alpha across epochs: {avg_alpha:.6f}\n")
+                f.write(f"Final Alpha value: {final_alpha:.6f}\n")
+                f.write(f"Alpha history (first 10 epochs): {self.alpha_history[:10]}\n")
+                f.write(f"Alpha history (last 10 epochs): {self.alpha_history[-10:]}\n")
+            else:
+                # 다른 전략의 경우 기본 정보만
+                if self.alpha_history:
+                    final_alpha = self.alpha_history[-1][1]
+                    f.write(f"Final Alpha value: {final_alpha:.6f}\n")
+            f.write("\n")
+    
+    def finalize_log(self):
+        """로그 파일 마무리"""
+        end_time = datetime.now()
+        duration = end_time - self.start_time
+        
+        with open(self.log_file, 'a') as f:
+            f.write("=== Experiment Summary ===\n")
+            f.write(f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Total Duration: {str(duration)}\n")
+            f.write(f"Log saved to: {self.log_file}\n")
+
+
+def create_experiment_logger(result_dir, experiment_name):
+    """실험 로거 생성 헬퍼 함수"""
+    return ExperimentLogger(result_dir, experiment_name)
