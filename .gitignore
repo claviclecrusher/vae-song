@@ -163,6 +163,7 @@ result
 runs
 
 nohup.out
+*.out
 
 results/
 results_*/

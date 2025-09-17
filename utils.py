@@ -529,31 +529,42 @@ def compute_local_reg(model, loader, K):
             regs.append(loss_reg_term.item() / X_cell.size(0))
     return np.array(regs)
 
-def estimate_local_lipschitz(func, X, num_pairs=2000, metric=2, quantile=0.05, eps=1e-3, generator=None):
+def estimate_local_lipschitz(func, X, num_pairs=2000, metric=2, quantile=0.05, eps=1e-3, generator=None, use_grad=False):
     """
     주어진 함수(func)에 대해 X 내 랜덤 샘플 페어로 로컬 Lipschitz 상수를 추정.
     반환: (inverse_lipschitz, lipschitz, bi_lipschitz)
+    Args:
+        func: 계산할 함수 (예: model.decode)
+        X (Tensor): 입력 샘플들 [N, ...]
+        use_grad (bool): True일 경우 grad 필요 (예: LIDVAE decode).
     """
     if X.size(0) < 2:
         return 0.0, 0.0, 0.0
-    with torch.no_grad():
-        N = X.size(0)
-        if generator is None:
-            generator = torch.Generator(device=X.device).manual_seed(0)
-        idx1 = torch.randint(0, N, (num_pairs,), device=X.device, generator=generator)
-        idx2 = torch.randint(0, N, (num_pairs,), device=X.device, generator=generator)
-        x1 = X[idx1]
-        x2 = X[idx2]
+    N = X.size(0)
+    if generator is None:
+        generator = torch.Generator(device=X.device).manual_seed(0)
+    idx1 = torch.randint(0, N, (num_pairs,), device=X.device, generator=generator)
+    idx2 = torch.randint(0, N, (num_pairs,), device=X.device, generator=generator)
+    x1 = X[idx1]
+    x2 = X[idx2]
+    if use_grad:
+        # LIDVAE의 decode는 autograd.grad를 사용하므로 입력이 requires_grad여야 함
+        x1 = x1.detach().clone().requires_grad_(True)
+        x2 = x2.detach().clone().requires_grad_(True)
         y1 = func(x1)
         y2 = func(x2)
-        diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=eps)
-        diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=eps)
-        lip_ratio = diff_y / diff_x
-        A = torch.quantile(lip_ratio, quantile).clamp(min=eps)
-        B = torch.quantile(lip_ratio, 1 - quantile)
-        invA = 1.0 / A
-        bi = torch.maximum(invA, B)
-        return invA.item(), B.item(), bi.item()
+    else:
+        with torch.no_grad():
+            y1 = func(x1)
+            y2 = func(x2)
+    diff_y = (y1 - y2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=eps)
+    diff_x = (x1 - x2).view(num_pairs, -1).norm(dim=1, p=metric).clamp(min=eps)
+    lip_ratio = diff_y / diff_x
+    A = torch.quantile(lip_ratio, quantile).clamp(min=eps)
+    B = torch.quantile(lip_ratio, 1 - quantile)
+    invA = 1.0 / A
+    bi = torch.maximum(invA, B)
+    return invA.item(), B.item(), bi.item()
 
 def plot_heatmap(vals, K, title, filepath, cmap='viridis', extent=None): # extent 인자 추가
     """
@@ -667,6 +678,11 @@ class ExperimentLogger:
                 f.write(f"Beta: {model.beta}\n")
             if hasattr(model, 'alpha'):
                 f.write(f"Alpha: {model.alpha}\n")
+            if hasattr(model, 'il_factor'):
+                try:
+                    f.write(f"IL: {float(model.il_factor)*2.0}\n")  # 내부는 /2 스케일, 외부 표기는 원래 값
+                except Exception:
+                    pass
             if hasattr(model, 'latent_channel'):
                 f.write(f"Latent Dimension: {model.latent_channel}\n")
             if hasattr(model, 'data_type'):

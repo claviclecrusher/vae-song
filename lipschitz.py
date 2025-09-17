@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 # Import all necessary components from dataset, model, utils
 from dataset import load_dataset, GridMixtureDataset, WeightedGridMixtureDataset, SimpleGaussianMixtureDataset
-from model import LRVAE
+from model import LRVAE, LIDVAE
 from utils import compute_local_reg, estimate_local_lipschitz, plot_heatmap, plot_2d_histogram, reparameterize, apply_grad_clip
 import time
 import random
@@ -66,7 +66,12 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
                 continue
 
             z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z).view(-1, mu_cell.size(-1))
-            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples_for_cell, num_pairs=num_pairs_lips)
+            use_grad_decode = (type(model).__name__ == 'LIDVAE')
+            # LIDVAE의 decode는 autograd.grad를 사용하므로 grad를 활성화해야 함
+            with (torch.enable_grad() if use_grad_decode else torch.no_grad()):
+                inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                    model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+                )
             lips_vals[cell_idx] = lips
             inv_lips_vals[cell_idx] = inv_lips
             bi_lips_vals[cell_idx] = bi_lips
@@ -104,8 +109,16 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device) * 0.1 
             
             # --- KL Calculation (Z -> X_recon -> Z_re_encoded) ---
-            x_recon = model.decode(z_samples)
-            mu_re, log_var_re = model.encode(x_recon)
+            use_grad_decode = (type(model).__name__ == 'LIDVAE')
+            if use_grad_decode:
+                z_samples_req = z_samples.detach().clone().requires_grad_(True)
+                x_recon = model.decode(z_samples_req)
+                with torch.no_grad():
+                    mu_re, log_var_re = model.encode(x_recon)
+            else:
+                with torch.no_grad():
+                    x_recon = model.decode(z_samples)
+                    mu_re, log_var_re = model.encode(x_recon)
             # KL Divergence for re-encoded Z (vs. standard normal prior p(z) = N(0,I))
             kl_div_per_sample = -0.5 * torch.sum(1 + log_var_re - mu_re.pow(2) - log_var_re.exp(), dim=1)
             kl_vals_z[cell_idx] = kl_div_per_sample.mean().item()
@@ -113,7 +126,11 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
             # --- Decoder Lipschitz Calculation (Z -> X_recon) ---
             if z_samples.size(0) < 2:
                 continue
-            inv_lips, lips, bi_lips = estimate_local_lipschitz(model.decode, z_samples, num_pairs=num_pairs_lips)
+            use_grad_decode = (type(model).__name__ == 'LIDVAE')
+            with (torch.enable_grad() if use_grad_decode else torch.no_grad()):
+                inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                    model.decode, z_samples, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+                )
             lips_vals_z[cell_idx] = lips
             inv_lips_vals_z[cell_idx] = inv_lips
             bi_lips_vals_z[cell_idx] = bi_lips
@@ -124,6 +141,8 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
 def main():
     parser = argparse.ArgumentParser(description="Run VAE experiment for local Lipschitz and KL regularization.")
     parser.add_argument('--alpha', type=float, default=0.1, help='LRVAE alpha value (single value allowed).')
+    parser.add_argument('--IL', type=float, default=0.0, help='LIDVAE inverse Lipschitz factor.')
+    parser.add_argument('--model', type=str, default='lrvae', choices=['lrvae', 'lidvae'], help='Choose model type for experiment.')
     parser.add_argument('--K', type=int, default=16, help='Grid size (KxK) for data generation and visualization in X-space.')
     parser.add_argument('--std', type=float, default=0.1, help='Standard deviation for Gaussian components in data generation.')
     parser.add_argument('--epochs', type=int, default=1000, help='Number of training epochs.')
@@ -212,12 +231,17 @@ def main():
                       title=f'Training Data Distribution ({args.distribution_pattern})',
                       filepath=os.path.join(args.output_dir, 'train_distribution_2d.png'))
 
-    # 2. LRVAE Model Training
-    print("Initializing and training LRVAE model...")
-    model = LRVAE(alpha=args.alpha, dataset='pinwheel', hidden_channels=args.hidden_channels)
-    model.beta = args.beta
-    model.alpha = args.alpha
-    model.wu_alpha = 1.0
+    # 2. Model init & training
+    is_lidvae = (args.model == 'lidvae')
+    if is_lidvae:
+        print("Initializing and training LIDVAE model...")
+        model = LIDVAE(inverse_lipschitz=args.IL, beta=args.beta, dataset='pinwheel', hidden_channels=args.hidden_channels)
+    else:
+        print("Initializing and training LRVAE model...")
+        model = LRVAE(alpha=args.alpha, dataset='pinwheel', hidden_channels=args.hidden_channels)
+        model.beta = args.beta
+        model.alpha = args.alpha
+        model.wu_alpha = 1.0
 
     grad_clip_cfg = {
         'enabled': args.grad_clip_enabled,
@@ -229,11 +253,15 @@ def main():
 
     # 실험 로거 초기화 (utils.py에서 import 필요)
     from utils import create_experiment_logger
-    experiment_logger = create_experiment_logger(args.output_dir, f"LRVAE_alpha{args.alpha}_beta{args.beta}")
+    reg_label = 'IL' if is_lidvae else 'alpha'
+    reg_value = args.IL if is_lidvae else args.alpha
+    experiment_logger = create_experiment_logger(args.output_dir, f"{('LIDVAE' if is_lidvae else 'LRVAE')}_{reg_label}{reg_value}_beta{args.beta}")
     
     # 하이퍼파라미터 로깅
     experiment_logger.log_hyperparameters(
-        alpha=args.alpha,
+        model=('LIDVAE' if is_lidvae else 'LRVAE'),
+        alpha=(None if is_lidvae else args.alpha),
+        IL=(args.IL if is_lidvae else None),
         beta=args.beta,
         epochs=args.epochs,
         lr=args.lr,
@@ -313,22 +341,23 @@ def main():
     
     # 4. KL and Decoder Bi-Lipschitz Visualization (X-space based)
     print(f"\nEvaluating metrics based on X-space grid (K={args.K})...")
-    model.alpha = args.alpha
-    model.wu_alpha = args.alpha 
+    if not is_lidvae:
+        model.alpha = args.alpha
+        model.wu_alpha = args.alpha
 
     cell_kl_vals_x, cell_lips_vals_x, cell_inv_lips_vals_x, cell_bi_lips_vals_x = _get_kl_and_lipschitz_for_x_cells(model, test_dataset_x, args.K, args.device, nsamples_z=10, num_pairs_lips=2000)
 
-    plot_heatmap(cell_kl_vals_x, args.K, f"KL Div (X-space, alpha={args.alpha})",
-                 os.path.join(args.output_dir, f"kl_div_x_space_alpha_{args.alpha}.png"), cmap='viridis')
+    plot_heatmap(cell_kl_vals_x, args.K, f"KL Div (X-space, {reg_label}={reg_value})",
+                 os.path.join(args.output_dir, f"kl_div_x_space_{reg_label}_{reg_value}.png"), cmap='viridis')
 
-    plot_heatmap(cell_lips_vals_x, args.K, f"Local forward Lipschitz (X-space, alpha={args.alpha})",
-                 os.path.join(args.output_dir, f"lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
+    plot_heatmap(cell_lips_vals_x, args.K, f"Local forward Lipschitz (X-space, {reg_label}={reg_value})",
+                 os.path.join(args.output_dir, f"lips_x_space_{reg_label}_{reg_value}.png"), cmap='viridis')
 
-    plot_heatmap(cell_inv_lips_vals_x, args.K, f"Local inverse Lipschitz (X-space, alpha={args.alpha})",
-                 os.path.join(args.output_dir, f"inv_lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
+    plot_heatmap(cell_inv_lips_vals_x, args.K, f"Local inverse Lipschitz (X-space, {reg_label}={reg_value})",
+                 os.path.join(args.output_dir, f"inv_lips_x_space_{reg_label}_{reg_value}.png"), cmap='viridis')
 
-    plot_heatmap(cell_bi_lips_vals_x, args.K, f"Local bi-Lipschitz (X-space, alpha={args.alpha})",
-                 os.path.join(args.output_dir, f"bi_lips_x_space_alpha_{args.alpha}.png"), cmap='viridis')
+    plot_heatmap(cell_bi_lips_vals_x, args.K, f"Local bi-Lipschitz (X-space, {reg_label}={reg_value})",
+                 os.path.join(args.output_dir, f"bi_lips_x_space_{reg_label}_{reg_value}.png"), cmap='viridis')
 
     # 5. KL and Decoder Bi-Lipschitz Visualization (Z-space based)
     # encoded_z의 실제 범위를 사용하여 Z-space heatmap 생성
@@ -345,17 +374,17 @@ def main():
     if not np.all(cell_kl_vals_z == DEFAULT_EMPTY_CELL_FILL_VALUE):
         print(f"\nEvaluating metrics based on Z-space grid (K_z={args.K_z})...")
         # Z-space heatmaps에 Z 시각화에서 얻은 extent를 적용
-        plot_heatmap(cell_kl_vals_z, args.K_z, f"KL Div (Z-space, alpha={args.alpha})",
-                     os.path.join(args.output_dir, f"kl_div_z_space_alpha_{args.alpha}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
+        plot_heatmap(cell_kl_vals_z, args.K_z, f"KL Div (Z-space, {reg_label}={reg_value})",
+                     os.path.join(args.output_dir, f"kl_div_z_space_{reg_label}_{reg_value}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
 
-        plot_heatmap(cell_lips_vals_z, args.K_z, f"Local forward Lipschitz (Z-space, alpha={args.alpha})",
-                     os.path.join(args.output_dir, f"lips_z_space_alpha_{args.alpha}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
+        plot_heatmap(cell_lips_vals_z, args.K_z, f"Local forward Lipschitz (Z-space, {reg_label}={reg_value})",
+                     os.path.join(args.output_dir, f"lips_z_space_{reg_label}_{reg_value}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
 
-        plot_heatmap(cell_inv_lips_vals_z, args.K_z, f"Local inverse Lipschitz (Z-space, alpha={args.alpha})",
-                     os.path.join(args.output_dir, f"inv_lips_z_space_alpha_{args.alpha}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
+        plot_heatmap(cell_inv_lips_vals_z, args.K_z, f"Local inverse Lipschitz (Z-space, {reg_label}={reg_value})",
+                     os.path.join(args.output_dir, f"inv_lips_z_space_{reg_label}_{reg_value}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
 
-        plot_heatmap(cell_bi_lips_vals_z, args.K_z, f"Local bi-Lipschitz (Z-space, alpha={args.alpha})",
-                     os.path.join(args.output_dir, f"bi_lips_z_space_alpha_{args.alpha}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
+        plot_heatmap(cell_bi_lips_vals_z, args.K_z, f"Local bi-Lipschitz (Z-space, {reg_label}={reg_value})",
+                     os.path.join(args.output_dir, f"bi_lips_z_space_{reg_label}_{reg_value}.png"), cmap='viridis', extent=z_plot_extent) # extent 적용
     else:
         print(f"Z-space grid evaluation skipped as actual latent dimension is not 2D.")
 
@@ -364,7 +393,7 @@ def main():
     records = []
     for cell_idx in range(args.K * args.K): 
         records.append({
-            'alpha': args.alpha,
+            'alpha': reg_value,
             'space': 'X',
             'cell_idx': cell_idx,
             'kl_div': float(cell_kl_vals_x[cell_idx]),
@@ -374,7 +403,7 @@ def main():
     if not np.all(cell_kl_vals_z == DEFAULT_EMPTY_CELL_FILL_VALUE):
         for cell_idx_z in range(args.K_z * args.K_z):
             records.append({
-                'alpha': args.alpha,
+                'alpha': reg_value,
                 'space': 'Z',
                 'cell_idx': cell_idx_z,
                 'kl_div': float(cell_kl_vals_z[cell_idx_z]),
@@ -413,7 +442,7 @@ def main():
     
     # Create exp_lip.csv entry
     exp_lip_entry = {
-        'alpha': args.alpha,
+        'alpha': reg_value,
         'beta': args.beta,
         'kl': avg_kl,
         'L(z)': avg_bi_lips

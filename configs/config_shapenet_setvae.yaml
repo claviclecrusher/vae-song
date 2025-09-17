@@ -2,7 +2,7 @@ experiment_type: setvae
 common_params:
   niter: 1
   exp_epochs: 100
-  batch_size: 256
+  batch_size: 64
   exp_data: shapenet
   logfilename: log_setvae.csv
   resultname: result_setvae
