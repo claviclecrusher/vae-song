@@ -119,7 +119,7 @@ class FlexibleVAE(VAE):
         else:
             raise ValueError(f"Invalid dataset: {dataset}")
 
-        super(VAE, self).__init__()
+        super(FlexibleVAE, self).__init__()
 
         self.variational = variational # if False, it is just an autoencoder
         self.latent_channel = latent_channel
