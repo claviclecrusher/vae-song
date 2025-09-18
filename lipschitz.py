@@ -68,10 +68,17 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
             z_samples_for_cell = reparameterize(mu_cell, log_var_cell, nsamples=nsamples_z).view(-1, mu_cell.size(-1))
             use_grad_decode = (type(model).__name__ == 'LIDVAE')
             # LIDVAE의 decode는 autograd.grad를 사용하므로 grad를 활성화해야 함
-            with (torch.enable_grad() if use_grad_decode else torch.no_grad()):
-                inv_lips, lips, bi_lips = estimate_local_lipschitz(
-                    model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, use_grad=use_grad_decode
-                )
+            if use_grad_decode:
+                # Gradient를 켜되 파라미터 업데이트는 방지
+                with torch.enable_grad():
+                    inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                        model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+                    )
+            else:
+                with torch.no_grad():
+                    inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                        model.decode, z_samples_for_cell, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+                    )
             lips_vals[cell_idx] = lips
             inv_lips_vals[cell_idx] = inv_lips
             bi_lips_vals[cell_idx] = bi_lips
@@ -82,8 +89,8 @@ def _get_kl_and_lipschitz_for_x_cells(model, test_dataset, K, device, nsamples_z
 def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_dim, device, nsamples_z_per_cell=100, num_pairs_lips=100, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE):
     # Z-space grid evaluation is only meaningful for 2D latent spaces.
     if actual_latent_dim != 2:
-        print(f"Skipping Z-space grid evaluation: Model's actual latent dimension is {actual_latent_dim}D, not 2D.")
-        return np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32), np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
+        raise ValueError(f"Skipping Z-space grid evaluation: Model's actual latent dimension is {actual_latent_dim}D, not 2D.")
+        #return np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32), np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
 
     kl_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
     lips_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
@@ -91,51 +98,128 @@ def _get_kl_and_lipschitz_for_z_cells(model, K_z, z_min, z_max, actual_latent_di
     bi_lips_vals_z = np.full(K_z * K_z, empty_cell_fill_value, dtype=np.float32)
     
     model.eval()
-    with torch.no_grad():
-        # Define Z-space grid centers
-        z_centers_x = np.linspace(z_min, z_max, K_z)
-        z_centers_y = np.linspace(z_min, z_max, K_z)
+    # Z-space grid centers 정의 (gradient 없이)
+    z_centers_x = np.linspace(z_min, z_max, K_z)
+    z_centers_y = np.linspace(z_min, z_max, K_z)
+    
+    z_grid_centers = []
+    for y_idx in range(K_z):
+        for x_idx in range(K_z):
+            z_grid_centers.append([z_centers_x[x_idx], z_centers_y[y_idx]])
+    z_grid_centers = torch.tensor(z_grid_centers, dtype=torch.float32, device=device)
+
+    for cell_idx in range(K_z * K_z):
+        z_center_sample = z_grid_centers[cell_idx]
         
-        z_grid_centers = []
-        for y_idx in range(K_z):
-            for x_idx in range(K_z):
-                z_grid_centers.append([z_centers_x[x_idx], z_centers_y[y_idx]])
-        z_grid_centers = torch.tensor(z_grid_centers, dtype=torch.float32, device=device)
-
-        for cell_idx in range(K_z * K_z):
-            z_center_sample = z_grid_centers[cell_idx]
-            
-            # Generate z samples around the Z-space cell center
-            z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device) * 0.1 
-            
-            # --- KL Calculation (Z -> X_recon -> Z_re_encoded) ---
-            use_grad_decode = (type(model).__name__ == 'LIDVAE')
-            if use_grad_decode:
-                z_samples_req = z_samples.detach().clone().requires_grad_(True)
+        # Generate z samples around the Z-space cell center
+        z_samples = z_center_sample.repeat(nsamples_z_per_cell, 1) + torch.randn(nsamples_z_per_cell, actual_latent_dim, device=device) * 0.1 
+        
+        # --- KL Calculation (Z -> X_recon -> Z_re_encoded) ---
+        use_grad_decode = (type(model).__name__ == 'LIDVAE')
+        if use_grad_decode:
+            # Gradient를 켜되 파라미터 업데이트는 방지
+            with torch.enable_grad():
+                z_samples_req = z_samples.clone().detach().requires_grad_(True)
                 x_recon = model.decode(z_samples_req)
+                # encode는 gradient 없이
                 with torch.no_grad():
-                    mu_re, log_var_re = model.encode(x_recon)
-            else:
-                with torch.no_grad():
-                    x_recon = model.decode(z_samples)
-                    mu_re, log_var_re = model.encode(x_recon)
-            # KL Divergence for re-encoded Z (vs. standard normal prior p(z) = N(0,I))
-            kl_div_per_sample = -0.5 * torch.sum(1 + log_var_re - mu_re.pow(2) - log_var_re.exp(), dim=1)
-            kl_vals_z[cell_idx] = kl_div_per_sample.mean().item()
+                    mu_re, log_var_re = model.encode(x_recon.detach())
+        else:
+            with torch.no_grad():
+                x_recon = model.decode(z_samples)
+                mu_re, log_var_re = model.encode(x_recon)
+        # KL Divergence for re-encoded Z (vs. standard normal prior p(z) = N(0,I))
+        kl_div_per_sample = -0.5 * torch.sum(1 + log_var_re - mu_re.pow(2) - log_var_re.exp(), dim=1)
+        kl_vals_z[cell_idx] = kl_div_per_sample.mean().item()
 
-            # --- Decoder Lipschitz Calculation (Z -> X_recon) ---
-            if z_samples.size(0) < 2:
-                continue
-            use_grad_decode = (type(model).__name__ == 'LIDVAE')
-            with (torch.enable_grad() if use_grad_decode else torch.no_grad()):
+        # --- Decoder Lipschitz Calculation (Z -> X_recon) ---
+        if z_samples.size(0) < 2:
+            continue
+        use_grad_decode = (type(model).__name__ == 'LIDVAE')
+        if use_grad_decode:
+            # Gradient를 켜되 파라미터 업데이트는 방지
+            with torch.enable_grad():
                 inv_lips, lips, bi_lips = estimate_local_lipschitz(
                     model.decode, z_samples, num_pairs=num_pairs_lips, use_grad=use_grad_decode
                 )
-            lips_vals_z[cell_idx] = lips
-            inv_lips_vals_z[cell_idx] = inv_lips
-            bi_lips_vals_z[cell_idx] = bi_lips
+        else:
+            with torch.no_grad():
+                inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                    model.decode, z_samples, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+                )
+        lips_vals_z[cell_idx] = lips
+        inv_lips_vals_z[cell_idx] = inv_lips
+        bi_lips_vals_z[cell_idx] = bi_lips
             
     return kl_vals_z, lips_vals_z, inv_lips_vals_z, bi_lips_vals_z
+
+# Calculate L(z) from actual data distribution
+def _get_data_based_lipschitz(model, test_dataset, device, num_samples=5000, num_pairs_lips=5000, empty_cell_fill_value=DEFAULT_EMPTY_CELL_FILL_VALUE):
+    """
+    실제 데이터 분포로부터 충분한 수의 샘플을 생성하여 L(z)를 측정
+    """
+    model.eval()
+    
+    # 충분한 수의 데이터 포인트 인코딩
+    with torch.no_grad():
+        X_data = test_dataset.X.to(device)
+        mu_data, log_var_data = model.encode(X_data)
+        
+        # 더 많은 z 샘플 생성 (데이터 개수보다 많게)
+        if X_data.size(0) < num_samples:
+            # 데이터가 부족하면 reparameterization으로 더 많은 샘플 생성
+            z_samples = reparameterize(mu_data, log_var_data, nsamples=num_samples // X_data.size(0) + 1)
+            z_samples = z_samples.view(-1, mu_data.size(-1))[:num_samples]
+        else:
+            # 데이터가 충분하면 일부만 사용
+            indices = torch.randperm(X_data.size(0))[:num_samples]
+            mu_subset = mu_data[indices]
+            log_var_subset = log_var_data[indices]
+            z_samples = reparameterize(mu_subset, log_var_subset, nsamples=1).squeeze(1)
+    
+    # LIDVAE인 경우 gradient 활성화
+    use_grad_decode = (type(model).__name__ == 'LIDVAE')
+    if use_grad_decode:
+        with torch.enable_grad():
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                model.decode, z_samples, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+            )
+    else:
+        with torch.no_grad():
+            inv_lips, lips, bi_lips = estimate_local_lipschitz(
+                model.decode, z_samples, num_pairs=num_pairs_lips, use_grad=use_grad_decode
+            )
+    
+    return inv_lips, lips, bi_lips
+
+# Calculate KL divergence from actual data distribution
+def _get_data_based_kl(model, test_dataset, device, num_samples=5000):
+    """
+    실제 데이터 분포로부터 충분한 수의 샘플을 생성하여 KL divergence를 측정
+    """
+    model.eval()
+    
+    with torch.no_grad():
+        X_data = test_dataset.X.to(device)
+        mu_data, log_var_data = model.encode(X_data)
+        
+        # 더 많은 z 샘플 생성 (데이터 개수보다 많게)
+        if X_data.size(0) < num_samples:
+            # 데이터가 부족하면 reparameterization으로 더 많은 샘플 생성
+            z_samples = reparameterize(mu_data, log_var_data, nsamples=num_samples // X_data.size(0) + 1)
+            z_samples = z_samples.view(-1, mu_data.size(-1))[:num_samples]
+        else:
+            # 데이터가 충분하면 일부만 사용
+            indices = torch.randperm(X_data.size(0))[:num_samples]
+            mu_subset = mu_data[indices]
+            log_var_subset = log_var_data[indices]
+            z_samples = reparameterize(mu_subset, log_var_subset, nsamples=1).squeeze(1)
+        
+        # KL divergence 계산: -0.5 * sum(1 + log_var - mu^2 - exp(log_var))
+        kl_div_per_sample = -0.5 * torch.sum(1 + log_var_subset - mu_subset.pow(2) - log_var_subset.exp(), dim=1)
+        avg_kl = kl_div_per_sample.mean().item()
+    
+    return avg_kl
 
 
 def main():
@@ -388,6 +472,15 @@ def main():
     else:
         print(f"Z-space grid evaluation skipped as actual latent dimension is not 2D.")
 
+    # 6. Data-based measurements for final metrics
+    print(f"\nMeasuring KL and L(z) from actual data distribution...")
+    data_kl = _get_data_based_kl(model, test_dataset_x, args.device, num_samples=5000)
+    data_inv_lips, data_lips, data_bi_lips = _get_data_based_lipschitz(
+        model, test_dataset_x, args.device, num_samples=5000, num_pairs_lips=5000
+    )
+    print(f"Data-based KL measurement: {data_kl:.4f}")
+    print(f"Data-based L(z) measurement: inv_lips={data_inv_lips:.4f}, lips={data_lips:.4f}, bi_lips={data_bi_lips:.4f}")
+
 
     # Record and save results
     records = []
@@ -414,31 +507,11 @@ def main():
     df.to_csv(os.path.join(args.output_dir, 'experiment_metrics.csv'), index=False)
     
     # Calculate overall metrics for exp_lip.csv
-    # KL divergence: average of all non-empty cells
-    kl_x_valid = cell_kl_vals_x[cell_kl_vals_x != DEFAULT_EMPTY_CELL_FILL_VALUE]
-    kl_z_valid = cell_kl_vals_z[cell_kl_vals_z != DEFAULT_EMPTY_CELL_FILL_VALUE]
+    # KL divergence: use data-based measurement instead of grid average
+    avg_kl = data_kl  # Use the data-based measurement
     
-    if len(kl_x_valid) > 0 and len(kl_z_valid) > 0:
-        avg_kl = (kl_x_valid.mean() + kl_z_valid.mean()) / 2
-    elif len(kl_x_valid) > 0:
-        avg_kl = kl_x_valid.mean()
-    elif len(kl_z_valid) > 0:
-        avg_kl = kl_z_valid.mean()
-    else:
-        avg_kl = 0.0
-    
-    # Bi-Lipschitz constant L(z): average of all non-empty cells
-    bi_lips_x_valid = cell_bi_lips_vals_x[cell_bi_lips_vals_x != DEFAULT_EMPTY_CELL_FILL_VALUE]
-    bi_lips_z_valid = cell_bi_lips_vals_z[cell_bi_lips_vals_z != DEFAULT_EMPTY_CELL_FILL_VALUE]
-    
-    if len(bi_lips_x_valid) > 0 and len(bi_lips_z_valid) > 0:
-        avg_bi_lips = (bi_lips_x_valid.mean() + bi_lips_z_valid.mean()) / 2
-    elif len(bi_lips_x_valid) > 0:
-        avg_bi_lips = bi_lips_x_valid.mean()
-    elif len(bi_lips_z_valid) > 0:
-        avg_bi_lips = bi_lips_z_valid.mean()
-    else:
-        avg_bi_lips = 0.0
+    # Bi-Lipschitz constant L(z): use data-based measurement instead of grid average
+    avg_bi_lips = data_bi_lips  # Use the data-based measurement
     
     # Create exp_lip.csv entry
     exp_lip_entry = {
@@ -460,7 +533,11 @@ def main():
     # 평가 메트릭 로깅
     experiment_logger.log_evaluation_metrics(
         kl=avg_kl, 
-        bi_lipschitz=avg_bi_lips
+        bi_lipschitz=avg_bi_lips,
+        data_based_kl=data_kl,
+        data_based_bi_lips=data_bi_lips,
+        data_based_inv_lips=data_inv_lips,
+        data_based_lips=data_lips
     )
     
     # Alpha warmup 요약 로깅
@@ -470,7 +547,9 @@ def main():
     experiment_logger.finalize_log()
     
     print(f"Experiment complete. Results saved to {args.output_dir}")
-    print(f"Overall metrics - KL: {avg_kl:.4f}, Bi-Lipschitz L(z): {avg_bi_lips:.4f}")
+    print(f"Overall metrics - KL (data-based): {avg_kl:.4f}, Bi-Lipschitz L(z) (data-based): {avg_bi_lips:.4f}")
+    print(f"Data-based KL: {data_kl:.4f}")
+    print(f"Data-based L(z) details - inv_lips: {data_inv_lips:.4f}, lips: {data_lips:.4f}, bi_lips: {data_bi_lips:.4f}")
     print(f"Experiment log saved to: {experiment_logger.log_file}")
 
 if __name__ == '__main__':

@@ -16,3 +16,8 @@ do
     done
   done
 done
+
+
+#python lipschitz.py --model lidvae --epochs 1000 --IL 0.0 --beta 0.1 --K 16 --K_z 16 --z_min -3 --z_max 3 --device cuda:0 --output_dir ./results/temp/IL_0.0_beta_0.1_seed_42 --seed 42
+#python lipschitz.py --model lidvae --epochs 1000 --IL 0.1 --beta 0.1 --K 16 --K_z 16 --z_min -3 --z_max 3 --device cuda:0 --output_dir ./results/temp/IL_0.1_beta_0.1_seed_42 --seed 42
+#python lipschitz.py --model lidvae --epochs 1000 --IL 0.2 --beta 0.2 --K 16 --K_z 16 --z_min -3 --z_max 3 --device cuda:0 --output_dir ./results/temp/IL_0.2_beta_0.2_seed_42 --seed 42
