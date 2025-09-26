@@ -69,7 +69,7 @@ def create_plot(df, output_dir, experiment_name):
     """Create subplot with KL and L(z) vs beta for different alpha values"""
     
     # Text size multiplier for easy adjustment
-    text_scale = 1.5
+    text_scale = 2.2
     
     # Get unique alpha values and sort them
     alpha_values = sorted(df['alpha'].unique())
@@ -88,54 +88,60 @@ def create_plot(df, output_dir, experiment_name):
         if len(alpha_data) == 0:
             continue
             
-        color = colors[i]
+        # Use red color for alpha=0, viridis for others
         if alpha == 0.0:
+            color = '#CC0000'
             label = f'α={alpha} (β-VAE)'
         else:
+            color = colors[i]
             label = f'α={alpha} (Ours)'
         
         # Plot KL (left subplot)
         ax1.plot(alpha_data['beta'], alpha_data['kl'], 
-                '-o', color=color, linewidth=2, markersize=6, 
+                '--s', color=color, linewidth=4, markersize=14, 
                 label=label)
         
         # Plot L(z) (right subplot)
         ax2.plot(alpha_data['beta'], alpha_data['L(z)'], 
-                '-o', color=color, linewidth=2, markersize=6, 
+                '-o', color=color, linewidth=4, markersize=14, 
                 label=label)
     
     # Customize left subplot (KL)
-    ax1.set_xlabel('β (Beta)', fontsize=14 * text_scale)
-    ax1.set_ylabel('KL Divergence', fontsize=14 * text_scale)
+    ax1.set_xlabel('β (Regularization Weight)', fontsize=14 * text_scale)
+    #ax1.set_ylabel('Mean KLD', fontsize=14 * text_scale, labelpad=-50)
+    # Manually position Y-axis label higher
+    ax1.text(-0.05, 0.78, 'Mean KLD', transform=ax1.transAxes, fontsize=14 * text_scale, 
+             rotation=90, ha='center', va='top')
     ax1.set_yscale('log')
     ax1.grid(True, alpha=0.3)
     ax1.set_title('KL Divergence with β', fontsize=16 * text_scale)
-    ax1.legend(fontsize=14 * text_scale)
+    ax1.legend(fontsize=10 * text_scale)
+    ax1.set_xticks(beta_values)
     ax1.tick_params(axis='both', which='major', labelsize=14 * text_scale)
     ax1.tick_params(axis='both', which='minor', labelsize=12 * text_scale)
     
     # Customize right subplot (L(z))
-    ax2.set_xlabel('β (Beta)', fontsize=14 * text_scale)
-    ax2.set_ylabel('L(z) (Lipschitz Constant)', fontsize=14 * text_scale)
+    ax2.set_xlabel('β (Regularization Weight)', fontsize=14 * text_scale)
+    #ax2.set_ylabel('Mean L(z)', fontsize=14 * text_scale, labelpad=-50)
+    # Manually position Y-axis label higher
+    ax2.text(-0.05, 0.72, 'Mean L(z)', transform=ax2.transAxes, fontsize=14 * text_scale, 
+             rotation=90, ha='center', va='top')
     ax2.set_yscale('log')
     ax2.grid(True, alpha=0.3)
-    ax2.set_title('L(z) with β', fontsize=16 * text_scale)
-    ax2.legend(fontsize=14 * text_scale, loc='center right')
+    ax2.set_title('Local bi-Lipschitz with β', fontsize=16 * text_scale)
+    ax2.legend(fontsize=10 * text_scale, loc='center right', bbox_to_anchor=(0.98, 0.55))
+    ax2.set_xticks(beta_values)
     ax2.tick_params(axis='both', which='major', labelsize=14 * text_scale)
     ax2.tick_params(axis='both', which='minor', labelsize=12 * text_scale)
     
-    # Adjust layout
+    # Adjust layout with more space between subplots
     plt.tight_layout()
+    plt.subplots_adjust(wspace=0.16)
     
-    # Save plot
+    # Save combined plot
     output_file = os.path.join(output_dir, f"{experiment_name}_plot.svg")
     plt.savefig(output_file, format='svg', dpi=300, bbox_inches='tight')
-    print(f"Plot saved to: {output_file}")
-    
-    # Also save as PNG for preview
-    output_file_png = os.path.join(output_dir, f"{experiment_name}_plot.png")
-    plt.savefig(output_file_png, format='png', dpi=300, bbox_inches='tight')
-    print(f"Plot saved to: {output_file_png}")
+    print(f"Combined plot saved to: {output_file}")
     
     plt.close()
 
